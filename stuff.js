@@ -158,6 +158,7 @@ class Stuff {
     this.clicked = false;
     this.visible = true;
     this.update = undefined;
+    this.enabled = true;
   }
   
   MoveInLocalSpace(pos_delta) {
@@ -225,6 +226,7 @@ class Box extends Stuff {
     if (!this.visible) { return; }
     g.push()
     this.ApplyTransform(g);
+    g.resetShader();
     
     if (this.hovered) g.fill(0, 255, 128);
     else g.fill(255);
@@ -357,6 +359,8 @@ class ObjModel extends Box {
   constructor(obj, bbox = undefined) {
     super();
     this.obj = obj;
+    this.color = [220,220,220]
+    this.material = "specular"
     
     if (bbox == undefined && obj.bbox != undefined) { bbox = obj.bbox; }
     
@@ -367,11 +371,14 @@ class ObjModel extends Box {
     if (!this.visible) { return; }
     if (this.obj == undefined) { return; }
     g.push();
+    g_suppress_textures = true;
     this.ApplyTransform(g);
 
     g.noStroke();
     g.lights();
-    g.specularMaterial(120);
+    if (this.material == "specular") g.specularMaterial(55);
+    else g.ambientMaterial(55);
+    g.fill(this.color[0], this.color[1], this.color[2]);
     g.model(this.obj);
     
     if (this.hovered) {
@@ -385,27 +392,33 @@ class ObjModel extends Box {
 }
 
 class Billboard extends Stuff {
-  constructor() {
+  constructor(w = 160, h = 60) {
     super()
-    this.w = 160; this.h = 48
+    this.text_size = 20;
+    this.w = w; this.h = h
     this.canvas = createGraphics(this.w, this.h)
     this.pick_tact = undefined;
+    this.bgcolor = [ 128,128,128,128 ];
+    this.enabled = true;
   }
   
   SetText(t) {
-    this.canvas.clear()
-    this.canvas.background(128,128,128,128)
+    const bgc = this.bgcolor;
+    this.canvas.clear();
+    this.canvas.background(bgc[0], bgc[1], bgc[2], bgc[3]);
     this.canvas.textFont("Source Code Pro")
     this.canvas.noStroke()
     this.canvas.fill(255)
-    this.canvas.textSize(20)
+    this.canvas.textSize(this.text_size)
     this.canvas.textAlign(CENTER, CENTER)
     this.canvas.text(t, this.w/2, this.h/2)
   }
   
   Render(g) {
+    if (this.visible != true) return;
     g.push()
     this.ApplyTransform(g)
+    g_suppress_textures = false;
     
     const hw = this.w*0.5, hh = this.h*0.5
     const tw = this.canvas.width, th = this.canvas.height;
@@ -446,6 +459,8 @@ class Billboard extends Stuff {
   }
   
   Intersect(_o, _d) {
+    if (this.visible == false) return undefined;
+    if (this.enabled == false) return undefined;
     const EPS = 1e-3;
     const o = this.ToLocalPoint(_o), d = this.ToLocalDirection(_d);
     const n = new p5.Vector(0,0,1);
@@ -489,13 +504,14 @@ function DrawGrid(x, z, step, g) {
     }
     g.endShape()
   } else {
-    g.strokeWeight(3);
-    g.stroke(255);
+    const S = 2700
+    g.push()
+    g.strokeWeight(6);
+    
     g.fill(0,0,0,128);
     
-    const S = 2700
+    g.translate(-S,0,S/2);
     
-    g.push()
     g.model(g_obj_grid);
     g.translate(S, 0, 0);
     g.model(g_obj_grid);
@@ -507,12 +523,20 @@ function DrawGrid(x, z, step, g) {
     g.model(g_obj_grid);
     g.translate(S, 0, 0);
     g.model(g_obj_grid);
-    
-    g.translate(0, 0, 2*S);
+    g.translate(S, 0, 0);
     g.model(g_obj_grid);
     
-    g.pop()
-    g.strokeWeight(1);
+    g.translate(-2*S, 0, -S);
+    g.model(g_obj_grid);
+    g.translate(S, 0, 0);
+    g.model(g_obj_grid);
+    g.translate(S, 0, 0);
+    g.model(g_obj_grid);
+    
+    //g.translate(0, 0, 2*S);
+    //g.model(g_obj_grid);
+    
+    g.pop();
   }
 }
 
@@ -605,11 +629,14 @@ class Gadget {
   constructor() {
     this.shapes = []
     this.pos = new p5.Vector(0,0,0)
-    this.visible = true;
+    this.visible = false;
+    this.enabled = false;
   }
   
   // o and are world ray position & direction
   IntersectWithMouse(o, d) {
+    if (this.enabled != true) return;
+    if (this.visible != true) return;
     let t_min = 1e20, cand = null
     for (let i=0; i<this.shapes.length; i++) {
       const s = this.shapes[i];
@@ -635,9 +662,7 @@ class Gadget {
     if (!this.visible) { return; }
     g.push()
     g.translate(this.pos.x, this.pos.y, this.pos.z)
-    g.beginShape(QUADS)
     for (let i=0; i<this.shapes.length; i++) this.shapes[i].Render(g)
-    g.endShape()
     g.pop()
   }
 }
