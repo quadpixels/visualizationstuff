@@ -4,10 +4,18 @@
 const SPRING_L0 = 67;
 const HOME_Y0_PAD = 66;
 
+if (!Array.prototype.remove) {
+  Array.prototype.remove = function(val) {
+    var i = this.indexOf(val);
+         return i>-1 ? this.splice(i, 1) : [];
+  };
+}
+
 // Currently highlighted TreeNode
 let g_highlight_key = undefined;
 let g_msg = "";
 let g_data_input, g_n_input;
+let g_particles = [];
 
 function SetGlobalMessage(msg) {
   console.log("[SetGlobalMessage] " + msg);
@@ -15,23 +23,37 @@ function SetGlobalMessage(msg) {
 }
 
 class Particle {
-  constructor(p0, p1, timeout) {
+  constructor(p0, p1, timeout, cb=undefined) {
     this.p0 = p0; this.p1 = p1;
-    this.marked_for_delete = true;
+    this.marked_for_delete = false;
     this.timeout = timeout;
     this.start_millis = millis();
+    this.pos = this.p0.copy();
+    this.cb = cb;
+  }
+  
+  Update() {
+    const us = millis();
+    const c = (us - this.start_millis) / (this.timeout);
+    if (c > 1) { this.MarkForDelete(); }
+    this.pos.x = lerp(this.p0.x, this.p1.x, c);
+    this.pos.y = lerp(this.p0.y, this.p1.y, c);
   }
   
   Render() {
     if (this.marked_for_delete) {
       return;
     }
-    if (millis() > this.start_millis + this.timeout) {
-      this.MarkForDelete();
-    }
+    noStroke();
+    fill(32, 192, 32, 128);
+    circle(this.pos.x, this.pos.y, 30);
   }
   
-  MarkForDelete() { this.marked_for_delete = true; }
+  MarkForDelete() {
+    if (this.marked_for_delete) return;
+    if (this.cb != undefined) { this.cb(); }
+    this.marked_for_delete = true; 
+  }
 }
 
 class Solution {
@@ -86,12 +108,17 @@ class Solution {
         if (key in this.dp) {
           SetGlobalMessage(callname + "'s result is already in the DP table");
           this.return_values[key] = this.dp[key];
-          OnExit(key);
+          
+          const p0 = g_dptable.GetGlobalXY(lb, ub);
+          const p1 = g_key_to_node[key].pos;
+          g_particles.push(new Particle(p0, p1, 500, function() {
+            OnExit(key, parent_key);
+          }));
           g_highlight_key = undefined;
         } else {
           SetGlobalMessage(callname + " has started");
           ret = [(key) => {
-            return this.GetCost(lb, ub, 1, key);
+            return this.GetCost(lb, ub, 1, parent_key);
           }];
         }
         return ret;
@@ -112,7 +139,7 @@ class Solution {
           }
         });
         SetGlobalMessage(callname + " has spawned " + num_spawned + " sub calls")
-        ret.push(() => { return this.GetCost(lb, ub, 2, key); });
+        ret.push(() => { return this.GetCost(lb, ub, 2, parent_key); });
         return ret;
       }
 
@@ -123,8 +150,8 @@ class Solution {
         this.cuts.forEach((c) => {
           if (c > lb && c < ub) {
             is_atomic = false;
-            const key1 = lb * 1000000007 + c;
-            const key2 = c * 1000000007 + ub;
+            const key1 = this.GetKey(lb, c);
+            const key2 = this.GetKey(c, ub);
             const cand = this.return_values[key1] +
               this.return_values[key2];
             cut_cost = min(cut_cost, cand);
@@ -134,9 +161,14 @@ class Solution {
         else out = 0;
         this.dp[key] = out;
         this.return_values[key] = out;
-        g_dptable.OnDPCellFilled(lb, ub);
+
         SetGlobalMessage(callname + " returns " + out);
-        OnExit(key);
+        const p1 = g_dptable.GetGlobalXY(lb, ub);
+        const p0 = g_key_to_node[key].pos;
+        g_particles.push(new Particle(p0, p1, 500, function() {
+          g_dptable.OnDPCellFilled(lb, ub); // 没有逻辑上的副作用只有看着的区别
+        }));
+        OnExit(key, parent_key);
         g_highlight_key = undefined;
         return [];
       }
@@ -165,7 +197,7 @@ class Solution {
 }
 
 class DPTable {
-  constructor(n, cuts) {
+  constructor(n, cuts, x=0, y=24) {
     this.breaks = [0].concat(cuts).concat([n]);
     let pad = 0;
    
@@ -179,6 +211,8 @@ class DPTable {
     this.x0 = this.y0 = pad + L;
     const N = this.breaks.length;
     this.g = createGraphics(N*L+pad+L, N*L+pad+L);
+    this.x = x;
+    this.y = y;
   }
   
   RefreshCanvas() {
@@ -219,6 +253,15 @@ class DPTable {
     }
   }
   
+      
+  GetGlobalXY(lb, ub) {
+    const celly = this.breaks.indexOf(lb);
+    const cellx = this.breaks.indexOf(ub);
+    const gx = this.x + this.x0 + (cellx + 0.5) * this.L;
+    const gy = this.y + this.y0 + (celly + 0.5) * this.L;
+    return new p5.Vector(gx, gy);
+  }
+  
   OnDPCellFilled(lb, ub) {
     const idx0 = this.breaks.indexOf(lb);
     const idx1 = this.breaks.indexOf(ub);
@@ -240,8 +283,8 @@ class DPTable {
     this.g.text(txt, dx0, dy0);
   }
   
-  Render(x, y) {
-    image(this.g, x, y);
+  Render() {
+    image(this.g, this.x, this.y);
   }
 };
 
@@ -298,6 +341,7 @@ class TreeNode {
     this.v.add(f.copy().mult(this.inv_mass));
   }
   Update(delta_millis) {
+   
     this.pos.add(this.v.copy().mult(delta_millis / 1000));
     this.v.mult(0.95);
     if (this.home_y0 != undefined) {
@@ -374,7 +418,6 @@ function OnAppear(key, parent_key, level) {
   }
   
   if (parent_key != undefined && (parent_key in g_key_to_node)) {
-    console.log("addedge")
     AddEdge(n, g_key_to_node[parent_key]);
   }
 }
@@ -383,13 +426,28 @@ function OnEnter(key) {
   g_key_to_node[key].Highlight(1);
 }
 
-function OnExit(key) {
+function OnExit(key, parent_key) {
+  const victim = g_key_to_node[key];
+  const vp = g_key_to_node[parent_key];
+  console.log("OnExit " + key + ", " + parent_key);
+  
+  //g_nodes.remove(victim);
+  let ve = []; // ve = victim edges
+  let num_edges_with_key = 0;
+  g_springs.forEach((s) => {
+    if (s.n0 == victim || s.n1 == victim) { num_edges_with_key ++; }
+    if (s.n0 == victim && s.n1 == vp) { ve.push(s); }
+    else if (s.n1 == victim && s.n0 == vp) { ve.push(s); }
+  });
+  ve.forEach((v) => {
+    g_springs.remove(v);
+  });
   g_key_to_node[key].Unhighlight();
 }
 
 function UpdateRepulsionForce() {
   
-  const L0 = 222;
+  const L0 = 112;
   const M = 4000;
   
   const N = g_nodes.length;
@@ -418,6 +476,11 @@ function setup() {
   btn1.size(100);
   btn1.position(width-108, 8);
   btn1.mousePressed(function() {
+    // Finish all pending animations
+    g_particles.forEach((p) => {
+      p.start_millis = -100000000;
+      p.Update();
+    });
     g_solution.Step();
   });
 
@@ -458,11 +521,23 @@ function draw() {
     n.Render();
   });
   
+  let particles_next = [];
+  g_particles.forEach((p) => {
+    p.Update();
+    if (!p.marked_for_delete) {
+      particles_next.push(p);
+    }
+  });
+  g_particles = particles_next;
+  g_particles.forEach((p) => {
+    p.Render();
+  });
+  
   noStroke();
   fill(255);
   textAlign(LEFT, TOP);
   text("DP Table", 8, 8);
-  g_dptable.Render(0, 24);
+  g_dptable.Render();
   
   
   textAlign(CENTER, TOP);
