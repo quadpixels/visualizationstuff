@@ -341,11 +341,18 @@ class TreeNode {
     this.v.add(f.copy().mult(this.inv_mass));
   }
   Update(delta_millis) {
-   
     this.pos.add(this.v.copy().mult(delta_millis / 1000));
     this.v.mult(0.95);
     if (this.home_y0 != undefined) {
       this.pos.y = lerp(this.pos.y, this.home_y0, 0.2);
+    }
+    
+    // If too close to edge, add repulsion force
+    const MARGIN = 111;
+    if (this.pos.x < MARGIN) {
+      this.ApplyForce(new p5.Vector((MARGIN-this.pos.x) * 0.01, 0));
+    } else if (this.pos.x > width - MARGIN) {
+      this.ApplyForce(new p5.Vector((this.pos.x - (width - MARGIN)) * (-0.01), 0));
     }
   }
   Highlight(hl) {
@@ -502,7 +509,32 @@ function setup() {
   
   const btn2 = createButton("Use Input");
   btn2.position(368, height-32);
-  
+  btn2.mousePressed(function() {
+    let n = parseInt(g_n_input.value());
+    let cuts = JSON.parse(g_data_input.value());
+    // Sanity check
+    let ok = true;
+    cuts.forEach((c) => {
+      if (c <= 0 || c >= n) { 
+        ok = false;
+        SetGlobalMessage("Error: cuts cannot be < 0 or > n");
+      }
+    });
+    const LEN_LIMIT = 20;
+    if (cuts.length > LEN_LIMIT) {
+      SetGlobalMessage("Error: length of cuts cannot be larger than " +
+        LEN_LIMIT);
+    }
+    
+    if (!ok) {
+      
+    } else {
+      g_solution = new Solution(n, cuts);
+      g_dptable = new DPTable(n, cuts);
+      g_dptable.RefreshCanvas();
+      SetGlobalMessage("New input assigned");
+    }
+  });
   SetGlobalMessage("Press [Use Input] to set input or press [Step] to start algorithm");
 }
 
