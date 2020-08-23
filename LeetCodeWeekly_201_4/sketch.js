@@ -4,6 +4,38 @@
 const SPRING_L0 = 67;
 const HOME_Y0_PAD = 66;
 
+function GetParticleDuration() {
+  if (!g_autorun) { return 500; }
+  else return 77;
+}
+
+let g_autorun = true;
+let g_frame_count = 0;
+
+function RandomizeInput() {
+  const len = parseInt(10 + random(1000));
+  // 题目是100但是只能显示出20
+  const nsplit = parseInt(1 + min(len/2, random(20)));
+  let splits = new Set();
+  for (let i=0; i<nsplit; i++) {
+    let s;
+    do {
+      s = parseInt(1 + random(len-2));
+    } while (splits.has(s))
+    splits.add(s);
+  }
+  let cuts = [];
+  splits.forEach((x) => cuts.push(x));
+  cuts = sort(cuts);
+  g_solution = new Solution(len, cuts);
+  g_dptable = new DPTable(len, cuts);
+  g_dptable.RefreshCanvas();
+  g_nodes = [];
+  g_springs = [];
+  g_key_to_node = {};
+  SetGlobalMessage("New random input assigned");
+}
+
 if (!Array.prototype.remove) {
   Array.prototype.remove = function(val) {
     var i = this.indexOf(val);
@@ -25,6 +57,9 @@ function SetGlobalMessage(msg) {
 class Particle {
   constructor(p0, p1, timeout, cb=undefined) {
     this.p0 = p0; this.p1 = p1;
+    this.dir = p1.copy().sub(p0);
+    this.tot_dist = this.dir.mag();
+    this.dir.normalize();
     this.marked_for_delete = false;
     this.timeout = timeout;
     this.start_millis = millis();
@@ -46,7 +81,24 @@ class Particle {
     }
     noStroke();
     fill(32, 192, 32, 128);
-    circle(this.pos.x, this.pos.y, 30);
+    const LEN = 55;
+    
+    //circle(this.pos.x, this.pos.y, 30);
+    let pp0, pp1;
+    const us = millis();
+    const c = (us - this.start_millis) / (this.timeout);
+    const elapsed = c * this.tot_dist;
+    if (elapsed < LEN/2) { pp0 = this.p0; }
+    else { pp0 = this.pos.copy().sub(this.dir.copy().mult(LEN/2)); }
+    if (elapsed > this.tot_dist - LEN/2) { pp1 = this.p1; }
+    else { pp1 = this.pos.copy().add(this.dir.copy().mult(LEN/2)); }
+    
+    stroke(32, 192, 32, 128);
+    strokeWeight(10);
+    console.log(pp0);
+    console.log(pp1);
+    line(pp0.x, pp0.y, pp1.x, pp1.y);
+    strokeWeight(1);
   }
   
   MarkForDelete() {
@@ -65,6 +117,7 @@ class Solution {
     this.return_values = {}
     this.Reset();
     this.home_y0s = [];
+    this.done = false;
     for (let i=0; i<this.breaks.length-1; i++) {
       const lb = this.breaks[i], ub = this.breaks[i+1];
       const y = this.GetLevel(lb, ub);
@@ -111,7 +164,8 @@ class Solution {
           
           const p0 = g_dptable.GetGlobalXY(lb, ub);
           const p1 = g_key_to_node[key].pos;
-          g_particles.push(new Particle(p0, p1, 500, function() {
+          
+          g_particles.push(new Particle(p0, p1, GetParticleDuration(), function() {
             OnExit(key, parent_key);
           }));
           g_highlight_key = undefined;
@@ -165,7 +219,8 @@ class Solution {
         SetGlobalMessage(callname + " returns " + out);
         const p1 = g_dptable.GetGlobalXY(lb, ub);
         const p0 = g_key_to_node[key].pos;
-        g_particles.push(new Particle(p0, p1, 500, function() {
+        
+        g_particles.push(new Particle(p0, p1, GetParticleDuration(), function() {
           g_dptable.OnDPCellFilled(lb, ub); // 没有逻辑上的副作用只有看着的区别
         }));
         OnExit(key, parent_key);
@@ -219,8 +274,6 @@ class DPTable {
     this.g.clear();
     //this.g.background(64, 64, 64, 64);
     this.g.background(0, 0, 0, 0);
-    this.x0 = 16;
-    this.y0 = 16
     const N = this.breaks.length;
     
     this.g.stroke(255);
@@ -535,10 +588,22 @@ function setup() {
       SetGlobalMessage("New input assigned");
     }
   });
+  
+  const btn3 = createButton("Random Input");
+  btn3.position(480, height-32);
+  btn3.mousePressed(function() {
+    RandomizeInput();
+  });
+
   SetGlobalMessage("Press [Use Input] to set input or press [Step] to start algorithm");
 }
 
 function draw() {
+  if (g_frame_count == 0) {
+    AutoRunStep();
+  }
+  g_frame_count ++;
+  
   background(32);
   
   UpdateRepulsionForce();
@@ -574,4 +639,33 @@ function draw() {
   
   textAlign(CENTER, TOP);
   text(g_msg, width/2, 8);
+  
+  if (g_autorun == true) {
+    textAlign(LEFT, TOP);
+    fill(255, 255, 0);
+    text("Autorun mode\npress any key to stop", 128, 4);
+  }
+}
+
+function AutoRunStep() {
+  if (!g_autorun) return;
+  if (g_solution.done) {
+    setTimeout(function() {
+      RandomizeInput();
+      AutoRunStep();
+    }, 3000);
+  } else {
+    setTimeout(function() {
+      g_solution.Step();
+      AutoRunStep();
+    }, 100);
+  }
+}
+
+function keyPressed() {
+  g_autorun = false;
+}
+
+function mouseClicked() {
+  g_autorun = false;
 }
