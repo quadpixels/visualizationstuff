@@ -12,6 +12,36 @@ function GetParticleDuration() {
 let g_autorun = true;
 let g_frame_count = 0;
 
+function UseCurrInput() {
+  let n = parseInt(g_n_input.value());
+  let cuts = JSON.parse(g_data_input.value());
+  // Sanity check
+  let ok = true;
+  cuts.forEach((c) => {
+    if (c <= 0 || c >= n) { 
+      ok = false;
+      SetGlobalMessage("Error: cuts cannot be < 0 or > n");
+    }
+  });
+  const LEN_LIMIT = 20;
+  if (cuts.length > LEN_LIMIT) {
+    SetGlobalMessage("Error: length of cuts cannot be larger than " +
+      LEN_LIMIT);
+  }
+  
+  if (!ok) {
+    
+  } else {
+    g_solution = new Solution(n, cuts);
+    g_dptable = new DPTable(n, cuts);
+    g_dptable.RefreshCanvas();
+    SetGlobalMessage("New input assigned");
+    g_nodes = [];
+    g_springs = [];
+    g_key_to_node = {};
+  }
+}
+
 function RandomizeInput() {
   const len = parseInt(10 + random(1000));
   // 题目是100但是只能显示出20
@@ -34,6 +64,8 @@ function RandomizeInput() {
   g_springs = [];
   g_key_to_node = {};
   SetGlobalMessage("New random input assigned");
+  g_n_input.value(len+"");
+  g_data_input.value("["+cuts+"]");
 }
 
 if (!Array.prototype.remove) {
@@ -127,14 +159,23 @@ class Solution {
   }
   
   Reset() {
+    
+    UseInput();
+    
+    /*
     g_nodes = [];
-    g_springs = [];
+    g_springs = [];         
+    g_key_to_node = {};
+    g_dptable = new DPTable(this.n, this.cuts);
+    g_dptable.RefreshCanvas();
+    
     this.callbacks = [() => {
       const key = this.GetKey(0, this.n);
       OnAppear(key, undefined);
       return this.GetCost(0, this.n, 0, key);
     }]
     this.done = false;
+    */
   }
   
   GetKey(lb, ub) {
@@ -563,30 +604,7 @@ function setup() {
   const btn2 = createButton("Use Input");
   btn2.position(368, height-32);
   btn2.mousePressed(function() {
-    let n = parseInt(g_n_input.value());
-    let cuts = JSON.parse(g_data_input.value());
-    // Sanity check
-    let ok = true;
-    cuts.forEach((c) => {
-      if (c <= 0 || c >= n) { 
-        ok = false;
-        SetGlobalMessage("Error: cuts cannot be < 0 or > n");
-      }
-    });
-    const LEN_LIMIT = 20;
-    if (cuts.length > LEN_LIMIT) {
-      SetGlobalMessage("Error: length of cuts cannot be larger than " +
-        LEN_LIMIT);
-    }
-    
-    if (!ok) {
-      
-    } else {
-      g_solution = new Solution(n, cuts);
-      g_dptable = new DPTable(n, cuts);
-      g_dptable.RefreshCanvas();
-      SetGlobalMessage("New input assigned");
-    }
+    UseCurrInput();
   });
   
   const btn3 = createButton("Random Input");
