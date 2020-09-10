@@ -6,7 +6,7 @@
 // 2) "Pixel Art Style Clouds" by redmdlee
 // https://www.deviantart.com/redmdlee/art/Pixel-Art-Style-Clouds-761194063
 
-let g_automode = false;
+let g_autorun = false;
 
 const GLOBAL_OFFSET = 1;
 let g_persons = [];
@@ -256,7 +256,6 @@ class Director {
   
       break;
     case "finish_screen_start": {
-      this.idx = 0;
       let i=0;
       g_completed_persons.forEach((p) => {
         p.state = "completed";
@@ -271,7 +270,9 @@ class Director {
       g_animator.Animate(g_label1, "x", [g_label1.x, W*0.65], [0, 400]);
       g_animator.Animate(g_label1, "y", [g_label1.y, H*0.25], [0, 400]);
       g_animator.Animate(g_label1, "font_size", [g_label1.font_size, 33], [0, 400]);
+      g_label1.text = this.idx + "期\n" + g_performerlayout2.idx + "名演唱者";
       this.state = "finish_screen_end";
+      this.idx = 0;
       break;
     }
     case "finish_screen_end": {
@@ -560,9 +561,9 @@ class Person {
   static JUMP_PERIOD = 1000; // Period
   
   constructor(x, y) {
-    this.x = random(-200, 200);
+    this.x = random(-210, 210);
     this.y = -100;
-    this.z = random(0, 2);
+    this.z = random(0.1, 2);
     this.scale = 0.5;
     this.pos = new p5.Vector(
       this.x,
@@ -655,13 +656,13 @@ class Person {
     const x = this.x, y = this.y, z = this.z;
     
     // 下来的时候走不同的路线
-    let x0 = random(W*0.1, W*0.5);
+    let x0 = random(W*0, W*0.2);
     if (random() < 0.5) x0 = x0*(-1);
-    let y0 = random(H*0.3, H*0.6);
+    let y0 = random(H*0.1, H*0.3);
     
     g_animator.Animate(this, "scale", [1, 1, 0.5], [0, offset+0, offset+400]);
     g_animator.Animate(this, "x", [x, x0, x0, this.orig_pos.x], [0, offset+0, offset+200, offset+400]);
-    g_animator.Animate(this, "z", [z, -.2, -.2, this.orig_pos.z ], [0, offset+0, offset+200, offset+400]);
+    g_animator.Animate(this, "z", [z, .3, .3, this.orig_pos.z ], [0, offset+0, offset+200, offset+400]);
     g_animator.Animate(this, "y", [y, y, y0, this.orig_pos.y], [0, offset+0, offset+200, offset+400], ()=> {
       this.state = "idle";
       this.pos = this.orig_pos.copy();
@@ -811,6 +812,7 @@ function RenderQueuedSprites() {
   });
 }
 
+g_frame_count = 0;
 g_last_millis = 0;
 function draw() {
   const ms = millis();
@@ -819,6 +821,12 @@ function draw() {
   background(64);
   fill(255);
   stroke(0);
+  
+  if (g_frame_count == 0) {
+    if (g_autorun) {
+      AutoRunStep();
+    }
+  }
   
   // Background
   g_bg_sprites.forEach((p) => { p.Render(); });
@@ -860,25 +868,54 @@ function draw() {
   fill(255);
   text(g_label1.text, g_label1.x, g_label1.y);
   pop();
+  
+  textAlign(LEFT, TOP);
+  if (g_autorun) {
+    noStroke();
+    fill(255, 255, 0);
+    text("Autorun Mode\nPush [space]\nto cancel", 4, 4);
+  }
+  
+  g_frame_count ++;
 }
 
 function StartAutoRun() {
+  g_autorun = true;
   AutoRunStep();
 }
 
 function AutoRunStep() {
-  
+  if (!g_autorun) return;
+  console.log("AutoRunStep");
   g_director.Step();
   
   let delay = 0;
   const x = g_director.idx;
   if (x < 3) {
     delay = 800;
+  } else if (x < 10) {
+    delay = 300 + random(0, 100);
   } else if (x < g_audience_sizes.length - 1) {
-    delay = 333;
+    delay = 100 + random(0, 50);
   } else {
+    delay = 1200;
+  }
+  
+  if (g_director.state == "idle" && x <= g_audience_sizes.length - 1) {
+    delay /= 3;
+  }
+  
+  // 特例
+  if (g_director.state == "idle" && x == 0) {
     delay = 2000;
   }
+  
+  if (g_director.state == "finish_screen_start") {
+    delay = 1000;
+  } else if (g_director.state == "finish_screen_end") {
+    delay = 2000;
+  }
+  
   setTimeout(function() {
     AutoRunStep();
   }, delay);
@@ -886,8 +923,10 @@ function AutoRunStep() {
 
 function keyPressed() {
   if (key === ' ') {
-    g_automode = false;
+    g_autorun = false;
     g_director.Step();
+  } else if (key == 'a') {
+    StartAutoRun();
   }
   return false;
 }
