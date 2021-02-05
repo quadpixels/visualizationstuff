@@ -1,4 +1,4 @@
-const RESTITUTIONS = [0.3, 0.3, 0.3, 0.03];
+const RESTITUTIONS = [ 0.3, 0.3, 0.03 ];
 let RESTITUTION = 0.3;
 const FRIC_DYNAMIC = 0.3;
 const FRIC_STATIC = 0.1;
@@ -173,50 +173,41 @@ class PoShape {
         [ -hw, hh], [hw, hh], [hw, -hh], [-hw, -hh] 
       ];
       let vo = new p5.Vector(l.x - rv[corner_idx][0], l.y - rv[corner_idx][1]);
-      if (vo.dot(vo) > r*r - EPS) return false;
-      
-      const vo_len = vo.mag();
-      vo.normalize();
-      vo = rect.ToWorldDirection(vo);
-      vo.mult(r - vo_len);
-      return [true, vo];
+      if (vo.dot(vo) > r*r - EPS) {
+      } else {
+        const vo_len = vo.mag();
+        vo.normalize();
+        vo = rect.ToWorldDirection(vo);
+        vo.mult(r - vo_len);
+        return [true, vo];
+      }
     }
     
     // 与边相撞
     const dist_up = r + hh - l.y, dist_down = l.y - (-r-hh),
           dist_left = l.x - (-r-hw), dist_right = (r+hw) - l.x;
-    if (l.x > -hw && l.x < hw && l.y > -hh && l.y < hh) {
-      if (hw > hh) {
-        if (dist_up < dist_down) { 
-          return [true, rect.ToWorldDirection(new p5.Vector(0, dist_up))]; 
-        } else { 
-          return [true, rect.ToWorldDirection(new p5.Vector(0, -dist_down))]; 
-        }
-      } else {
-        if (dist_left < dist_right) { 
-          return [true, rect.ToWorldDirection(new p5.Vector(-dist_left, 0))];
-        } else { 
-          return [true, rect.ToWorldDirection(new p5.Vector(dist_right, 0))]; 
+    if (l.x > -hw-r && l.x < hw+r && l.y > -hh-r && l.y < hh+r) {
+      let idx_min = -1;
+      let min_dist = 1e20;
+      const dists = [ dist_up, dist_down, dist_left, dist_right ];
+      const n = [[0, 1], [0, -1], [-1, 0], [1, 0]]; // Points from rect to circ
+      for (let i=0; i<4; i++) {
+        if (dists[i] <= -EPS) continue;
+        if (dists[i] < min_dist) {
+          min_dist = dists[i];
+          idx_min = i;
         }
       }
+      //console.log("idx_min=" + idx_min + ", dists=" + dist_up + ", " + dist_down + ", " + dist_left + ", " + dist_right);
+      let mtd = new p5.Vector(n[idx_min][0], n[idx_min][1]);
+      mtd = rect.ToWorldDirection(mtd);
+      if (min_dist == 0) min_dist = EPS;
+      mtd.mult(min_dist);
+      return [true, mtd];
     }
+    return false;
     
-    let idx_min = -1;
-    let min_dist = 1e20;
-    const dists = [ dist_up, dist_down, dist_left, dist_right ];
-    const n = [[0, 1], [0, -1], [-1, 0], [1, 0]]; // Points from rect to circ
-    for (let i=0; i<4; i++) {
-      if (dists[i] <= -EPS) continue;
-      if (dists[i] < min_dist) {
-        min_dist = dists[i];
-        idx_min = i;
-      }
-    }
-    let mtd = new p5.Vector(n[idx_min][0], n[idx_min][1]);
-    mtd = rect.ToWorldDirection(mtd);
-    if (min_dist == 0) min_dist = EPS;
-    mtd.mult(min_dist);
-    return [true, mtd];
+    
   }
   
   static CircleCircleCollision(circ1, circ2) {
@@ -304,6 +295,9 @@ class PoShape {
   ApplyQueuedImpulse() {
     const delta_omega = this.torque_q * this.inv_inertia;
     this.omega += delta_omega;
+    
+    //if (this.v_q.magSq() > 0.01) { console.log("v_q=" + this.v_q.x + "," + this.v_q.y); }
+    
     this.v.add(this.v_q);
     this.v_q = new p5.Vector(0, 0);
     this.torque_q = 0;
@@ -686,10 +680,16 @@ class PoContact {
       
       A.QueueImpulse(j.copy().mult(k), this.cpA[i]);
       B.QueueImpulse(j.copy().mult(-k),this.cpB[i]);
-      
-      
-    //console.log("A.inv_mass=" + A.inv_mass + ", B.inv_mass=" + B.inv_mass + ", j=" + j.x + "," + j.y)
     }
+  }
+  
+  ResolvePosition() {
+    const A = this.A, B = this.B, normal = this.normal;
+    const s = A.inv_mass + B.inv_mass;
+    const coef_a = A.inv_mass / s;
+    const coef_b = B.inv_mass / s;
+    A.pos.sub(normal.copy().mult(coef_a));
+    B.pos.add(normal.copy().mult(coef_b));
   }
   
   // V_n points from A to B.
@@ -729,8 +729,9 @@ class PoContact {
     }
     
     if (!this.is_static_fric_tact && FRIC_STATIC > 0) {
+      const EPS = 1e-4;
       let ratio_sq = vt.dot(vt) / vn.dot(vn);
-      if (ratio_sq > 0 && ratio_sq < FRIC_STATIC * FRIC_STATIC) {
+      if (ratio_sq > EPS && ratio_sq < FRIC_STATIC * FRIC_STATIC) {
         let sf_n = vt.copy().normalize();
         let stat_fric_ct = this.Copy();
         stat_fric_ct.is_static_fric_tact = true;
@@ -816,8 +817,7 @@ class PoScene {
       }
     })
     
-    // Collision and resolution
-    const NITER = 2;
+    const NITER = 3;
     for (let iter=0; iter<NITER; iter++) {
       this.contacts = [];
       
@@ -826,10 +826,8 @@ class PoScene {
       
       RESTITUTION = RESTITUTIONS[iter];
       
-      this.contacts.forEach((c) => {
-        c.Resolve();
-      })
-            
+      this.contacts.forEach((c) => { c.Resolve(); });
+      
       this.shapes.forEach((s) => {
         s.ApplyQueuedImpulse();
         s.IntegratePosRot(dt / NITER);
@@ -855,10 +853,17 @@ class PoScene {
   }
   
   CollisionDetection(force_resolve_overlap) {
+    
+    // 按照从低到高（Y从大到小）的顺序排列一下所有shape
+    let shapes1 = this.shapes.slice();
+    shapes1.sort((a, b) => {
+      return a.pos.y > b.pos.y;
+    });
+    
     const N = this.shapes.length;
     for (let i=0; i<N; i++) {
       for (let j=i+1; j<N; j++) {
-        let A = this.shapes[i], B = this.shapes[j];
+        let A = shapes1[i], B = shapes1[j];
         const c = PoShape.Collided(A, B);
         const is_collided = c[0];
         const normal = c[1];
@@ -890,6 +895,7 @@ class PoScene {
     let temp1 = new PoRect(width/2, 10);
     temp1.pos = new p5.Vector(width/2, height-11);
     temp1.SetInfiniteMass();
+    temp1.theta = 0;
     this.shapes.push(temp1);
       
     let temp2 = new PoRect(10, height/2);

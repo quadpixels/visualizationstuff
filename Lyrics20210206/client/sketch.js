@@ -3,6 +3,21 @@
 // todo:
 // 同步游戏状态
 // 操纵游戏玩法
+// 5）音符功能 --- MVP
+// 加一根红线表示游戏结束的上限 --- MVP
+// 
+// 1) 球落地会跳起来
+// 2) 一个人玩的时候会无法扔
+// 3）手臂不能超出范围
+// 4）合成时的变化有点快
+// 
+// 又有感觉：目前的状态、自由度有点过高、合成过于容易
+// 
+// 如果想突出合作的话：合作的动机在于场景自己会捣乱。
+// 方法一：大家都可以动，但是就让房主放
+// 方法二：每次只有一个人能动
+// 
+// 在某些场景中触发墙壁上平移
 
 let socket;
 let g_token;
@@ -26,14 +41,15 @@ let g_hovered_block;
 let g_viewport;
 let g_dirty = 0;
 
+let g_paused = false;
+
+let g_ball;
+
 let SNAPSHOT_INTERVAL = 1000; // 1000ms
 let g_snapshot_interval_countdown = SNAPSHOT_INTERVAL;
 
 let THETA_UPDATE_INTERVAL = 100;
 let g_theta_update_countdown = THETA_UPDATE_INTERVAL;
-
-// 物理模拟程序
-let g_shapes_scene;
 
 // 侯选区
 let g_thetas = [3.1415/2, 3.1415*0.75]; // 手臂的角度，顺时针旋转
@@ -131,7 +147,12 @@ function draw() {
   // phys
   if (g_scene != undefined) {
     const dt = min(0.5, delta_ms / 200);
-    g_scene.Step(dt);
+    const N = 3;
+    if (!g_paused) {
+      for (let i=0; i<N; i++) {
+        g_scene.Step(dt / N);
+      }
+    }
     g_scene.Render();
     
     if (g_is_host) {
@@ -185,6 +206,9 @@ function draw() {
 
   g_buttons.forEach((b) => { b.Render(); });
   g_textlabels.forEach((l) => { l.Render(); });
+  
+//  if (g_scene && !g_paused)
+//    console.log(g_ball.v);
 }
 
 function keyPressed() {
@@ -208,26 +232,31 @@ function InitializeGame() {
   g_scene.LoadDefaultScene();
   
   // 测试用场景
-  for (let i=0; i<10; i++) {
-    let c = new PoCircle(12);
-    c.pos.x = random(width);
-    c.pos.y = random(height);
-    c.tag = 1;
-    /*
-    let r = random();
-    if (r < 0.2) { c.tex = g_xcjc_textures[0]; }
-    else if (r < 0.6) { c.tex = g_xcjc_textures[1]; }
-    else if (r < 0.8) { c.tex = g_xcjc_textures[2]; }
-    else if (r < 1) { c.tex = g_xcjc_textures[3]; }
-    g_circle = c;
-    */
-    g_scene.shapes.push(c);
+  if (true) {
+    for (let i=0; i<1; i++) {
+      let c = new PoCircle(12);
+      
+      c.pos.x = i*32+44//random() * width;
+      c.pos.y = 200//random() * height;
+      c.tag = 1;
+      g_ball = c;
+      /*
+      let r = random();
+      if (r < 0.2) { c.tex = g_xcjc_textures[0]; }
+      else if (r < 0.6) { c.tex = g_xcjc_textures[1]; }
+      else if (r < 0.8) { c.tex = g_xcjc_textures[2]; }
+      else if (r < 1) { c.tex = g_xcjc_textures[3]; }
+      g_circle = c;
+      */
+      g_scene.shapes.push(c);
+    }
+  } else {
   }
 }
 
 // Tag
 function GenCandidate() {
-  let avg_tag = 0, n = 0;
+  let avg_tag = 0, n = 1;
   if (g_scene != undefined) {
     g_scene.shapes.forEach((s) => {
       if (s.tag != undefined) {
@@ -238,14 +267,13 @@ function GenCandidate() {
   } else { avg_tag = 1; }
   
   avg_tag /= n;
-  const tag = 1 + parseInt(Math.random(1+avg_tag));
+  const tag = 1 + parseInt(random(1+avg_tag));
   
   let cand;
   if (Math.random() < 0.5) {
-    
-    cand = new PoRect(Math.random()*30 + 8, Math.random()*30 + 8);
+    cand = new PoRect(Math.random()*30 + 20, Math.random()*30 + 20);
   } else {
-    cand = new PoCircle(Math.random()*30 + 10);
+    cand = new PoCircle(Math.random()*30 + 20);
   }
   cand.tag = tag;
   g_cand = cand;
@@ -304,6 +332,8 @@ function keyPressed() {
   else if (key == "d") { g_flags[0] = -1; }
   else if (key == ' ') {
     socket.emit("request_release_candidate");
+  } else if (key == 'p') {
+    g_paused = !g_paused;
   }
 }
 
