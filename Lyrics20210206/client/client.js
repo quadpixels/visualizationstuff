@@ -8,8 +8,11 @@ const GAME_STATUS_LOBBY = "lobby";
 const GAME_STATUS_INGAME = "ingame";
 var g_game_status = GAME_STATUS_LOBBY;
 
+let g_theta_min = 0, g_theta_max = 3.14159;
+
 //var SERVER_ADDR = "http://107.178.219.255:3000";
-var SERVER_ADDR = "http://127.0.0.1:3001";
+//var SERVER_ADDR = "http://127.0.0.1:3001";
+var SERVER_ADDR = "http://192.168.8.230:3001";
 
 function ConnectToServer() {
   g_room_id = undefined;
@@ -66,7 +69,9 @@ function ConnectToServer() {
   });
   
   socket.on("thetas", (thetas) => {
-    g_thetas = thetas;
+    //g_thetas = thetas;
+    g_theta_targets = thetas;
+    g_theta_targets[g_rank] = undefined;
   });
   
   socket.on("theta_one", (theta, rank) => {

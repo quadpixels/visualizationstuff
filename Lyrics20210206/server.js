@@ -8,7 +8,10 @@ var io = require('socket.io')(http, {
   cors: {
     origin: ["http://edgeofmap.com:*",
              "https://editor.p5js.org", // TODO：加入服务端的HTTPS
-             "http://localhost:3001" ],
+             "http://localhost:3001",
+             "http://192.168.8.178:3001",
+             "http://192.168.8.230:*",
+    ],
     methods: ["GET", "POST"]
    }
 });

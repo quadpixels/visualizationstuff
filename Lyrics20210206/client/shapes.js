@@ -1,4 +1,4 @@
-const RESTITUTIONS = [ 0.3, 0.3, 0.03 ];
+const RESTITUTIONS = [ 0.3, 0.3, 0 ];
 let RESTITUTION = 0.3;
 const FRIC_DYNAMIC = 0.3;
 const FRIC_STATIC = 0.1;
@@ -94,6 +94,7 @@ class PoShape {
     this.theta_prev = 0;
     this.omega_prev = 0;
     this.type = "";
+    this.tex = undefined;
   }
   
   // Returns [collided, MTD]
@@ -181,6 +182,7 @@ class PoShape {
         vo.mult(r - vo_len);
         return [true, vo];
       }
+      return false;
     }
     
     // 与边相撞
@@ -295,9 +297,6 @@ class PoShape {
   ApplyQueuedImpulse() {
     const delta_omega = this.torque_q * this.inv_inertia;
     this.omega += delta_omega;
-    
-    //if (this.v_q.magSq() > 0.01) { console.log("v_q=" + this.v_q.x + "," + this.v_q.y); }
-    
     this.v.add(this.v_q);
     this.v_q = new p5.Vector(0, 0);
     this.torque_q = 0;
@@ -355,10 +354,6 @@ class PoRect extends PoShape {
     this.type = "rect";
   }
   
-  SetTexture(t) {
-    this.tex = t;
-  }
-  
   SetInfiniteMass() {
     this.inv_mass = 0;
     this.inv_inertia = 0;
@@ -381,12 +376,18 @@ class PoRect extends PoShape {
     
     // 2021-02-04
     if (this.tag != undefined) {
-      push();
-      textSize(min(this.hw*2, this.hh*2));
-      textAlign(CENTER, CENTER);
-      fill(0);
-      text(this.tag + "", 0, 0);
-      pop();
+      if (g_skin == 0) {
+        push();
+        textSize(min(this.hw*2, this.hh*2));
+        textAlign(CENTER, CENTER);
+        fill(0);
+        text(this.tag + "", 0, 0);
+        pop();
+      } else {
+        push();
+        g_atlas.Render(this.tag-1, 0, 0, this.hw*2, this.hh*2);
+        pop();
+      }
     }
     
     pop();
@@ -475,10 +476,6 @@ class PoCircle extends PoShape {
     this.type = "circle";
   }
   
-  SetTexture(t) {
-    this.tex = t;
-  }
-  
   SetInfiniteMass() {
     this.inv_mass = 0;
     this.inv_inertia = 0;
@@ -500,11 +497,19 @@ class PoCircle extends PoShape {
     
     // 2021-02-04
     if (this.tag != undefined) {
-      textSize(this.r * 1.8);
-      textAlign(CENTER, CENTER);
-      fill(0);
-      noStroke();
-      text(this.tag + "", 0, 0);
+      if (g_skin == 0) {
+        push();
+        textSize(this.r * 1.8);
+        textAlign(CENTER, CENTER);
+        fill(0);
+        noStroke();
+        text(this.tag + "", 0, 0);
+        pop();
+      } else {
+        push();
+        g_atlas.Render(this.tag-1, 0, 0, this.r*2, this.r*2);
+        pop();
+      }
     } else {
       line(0, 0, this.r, 0);
     }

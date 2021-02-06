@@ -3,6 +3,7 @@
 // todo:
 // 同步游戏状态
 // 操纵游戏玩法
+//
 // 5）音符功能 --- MVP
 // 加一根红线表示游戏结束的上限 --- MVP
 // 
@@ -53,10 +54,39 @@ let g_theta_update_countdown = THETA_UPDATE_INTERVAL;
 
 // 侯选区
 let g_thetas = [3.1415/2, 3.1415*0.75]; // 手臂的角度，顺时针旋转
+const THETA_CHANGE_RATE = 3.1415/2;
+// 所有人的theta的平滑过渡
+let g_theta_targets = [];
+
+let g_skin = 1; // 0：数字，1：音符
+let g_image0, g_atlas;
+class Atlas {
+  constructor(tex) {
+    this.tex = tex;
+    this.cell_size = 128;
+    console.log(tex)
+    this.ncol = parseInt(tex.width / this.cell_size);
+  }
+  
+  Render(idx, x, y, w, h) {
+    const l = min(w, h);
+    const s = this.cell_size;
+    let cx = idx % this.ncol, cy = parseInt(idx / this.ncol);
+    push();
+    imageMode(CENTER);
+    image(this.tex, x, y, l, l, cx*s, cy*s, s, s);
+    pop();
+  }
+}
+
+function preload() {
+  g_image0 = loadImage("image0.png");
+}
 
 function setup() {
   createCanvas(400, 720);
   ConnectToServer();
+  g_atlas = new Atlas(g_image0);
 
   // 按钮
   g_btn_connect = new PushButton(100, 20, new p5.Vector(8, 32), "连接服务器", function() {
@@ -116,6 +146,27 @@ function HideRoomButtons() {
   g_btn_connect.is_active = false;
 }
 
+function Draw2DTorus(x, y, r0, r1, theta0, theta1) {
+  if (theta0 > theta1) return;
+  const STEP = 3;
+  // 外圈
+  const l1 = r1 * (theta1 - theta0);
+  let nbreaks = 2 + parseInt(l1 / STEP);
+  beginShape();
+  for (let i=0; i<nbreaks; i++) {
+    const theta = map(i, 0, nbreaks-1, theta0, theta1);
+    vertex(x+cos(theta)*r1, y+sin(theta)*r1);
+  }
+  // 内圈
+  const l0 = r0 * (theta1 - theta0);
+  nbreaks = 2 + parseInt(l0 / STEP);
+  for (let i=0; i<nbreaks; i++) {
+    const theta = map(i, 0, nbreaks-1, theta1, theta0);
+    vertex(x+cos(theta)*r0, y+sin(theta)*r0);
+  }
+  endShape(CLOSE);
+}
+
 let g_last_millis = 0;
 function draw() {
   const ms = millis();
@@ -129,6 +180,29 @@ function draw() {
     if (t < 0) t = 0;
     if (t > PI) t = PI;
     g_thetas[g_rank] = t;
+  }
+  
+  // 平滑过渡
+  {
+    const EPS = 1e-4;
+    const max_change = THETA_CHANGE_RATE * delta_ms / 1000;
+    for (let i=0; i<g_theta_targets.length; i++) {
+      const v0 = g_thetas[i], v1 = g_theta_targets[i];
+      if (g_theta_targets[i] == undefined) continue;
+      let vout = v0;
+      if (abs(v0 - v1) < EPS) {
+        vout = v1;
+      } else {
+        if (v0 > v1) {
+          vout = v0 - max_change;
+          if (vout < v1) vout = v1;
+        } else {
+          vout = v0 + max_change;
+          if (vout > v1) vout = v1;
+        }
+      }
+      g_thetas[i] = vout;
+    }
   }
   
   g_theta_update_countdown -= delta_ms;
@@ -146,7 +220,7 @@ function draw() {
   
   // phys
   if (g_scene != undefined) {
-    const dt = min(0.5, delta_ms / 200);
+    const dt = min(0.5, delta_ms / 100);
     const N = 3;
     if (!g_paused) {
       for (let i=0; i<N; i++) {
@@ -206,9 +280,45 @@ function draw() {
 
   g_buttons.forEach((b) => { b.Render(); });
   g_textlabels.forEach((l) => { l.Render(); });
-  
-//  if (g_scene && !g_paused)
-//    console.log(g_ball.v);
+
+  // Dragging the hand segment.
+  if (g_touch_state != undefined) {
+    let txt = "Drag: (" + g_last_mouse_pos[0] + "," + g_last_mouse_pos[1] +
+              ")+(" + g_viewport_drag_x + "," + g_viewport_drag_y;
+    push();
+    noStroke();
+    fill(0);
+    textAlign(LEFT, TOP);
+    text(txt, 0, 0);
+    
+    const x0 = g_last_mouse_pos[0], y0 = g_last_mouse_pos[1];
+    const x1 = x0 - g_viewport_drag_x, y1 = y0 - g_viewport_drag_y;
+    const R0 = 100, R1 = 200;
+    noStroke();
+    fill("rgba(32,192,255,0.3)");
+    //arc(x0, y0, 2*R, 2*R, g_theta_min, g_theta_max, PIE);
+    Draw2DTorus(x0, y0, R0, R1, g_theta_min, g_theta_max);
+    noFill();
+    stroke("rgba(32,192,255,1)");
+    
+    
+    let drag_dir = new p5.Vector(-g_viewport_drag_x, -g_viewport_drag_y);
+    let drag_heading = drag_dir.heading();
+    if (drag_heading < 0) drag_heading += 2*PI;
+    const drag_mag = drag_dir.mag();
+    
+    // 下半圈：控制角度
+    if (drag_mag >= R0 && drag_mag <= R1 &&
+      drag_heading >= g_theta_min && drag_heading <= g_theta_max) {
+      g_theta_targets[g_rank] = drag_heading;
+    } else {
+      g_theta_targets[g_rank] = undefined; // 移出区域则立刻停止移动
+    }
+    
+    line(x0, y0, x1, y1);
+    
+    pop();
+  }
 }
 
 function keyPressed() {
