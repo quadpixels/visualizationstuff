@@ -6,29 +6,34 @@ const GRAVITY = 9.8;
 const MY_DEBUG = false;
 
 const COLORS = [
-  "#EEE",
-  "#EAA",
-  "#AEA",
-  "#AAE",
-  "#EEA",
-  "#EAE",
-  "#AEE",
-  "#A3E",
+  "rgba(255, 173, 173, 1)",
+  "rgba(250, 163, 7,   1)",
+  "rgba(255, 214, 165, 1)",
+  "rgba(253, 255, 182, 1)",
+  "rgba(202, 255, 191, 1)",
+  "rgba(155, 246, 255, 1)",
+  "rgba(160, 196, 255, 1)",
+  "rgba(189, 178, 255, 1)",
+  "rgba(255, 198, 255, 1)",
+  "rgba(255, 255, 252, 1)",
 ]
 
 const SIZES = 
 [
   [ 3, 15 ],
+  [ 3, 20 ],
+  [ 3, 25 ],
   [ 3, 35 ],
   [ 2, 35 ],
   [ 2, 45 ],
   [ 2, 40 ],
   [ 2, 70 ],
   [ 2, 70 ],
+  [ 2, 70 ],
   [ 2, 100 ],
 ]
 
-const MAX_TAG = 8;
+const MAX_TAG = 10;
 
 // XY Limits for physical computation
 function GetGlobalXYLimit() {
@@ -87,7 +92,7 @@ class Mat2 {
 }
 
 const MAX_NUM_CONTACTS = 100;
-
+const FADE_IN_COUNTDOWN_MS = 2;
 // 破Shape
 class PoShape {
   constructor() {
@@ -110,7 +115,15 @@ class PoShape {
     this.tex = undefined;
     
     this.state = 0; // 0：刚扔下来，1：已经在下方了
+    this.fade_in_countdown_ms = 0; // 是否在fade in过程中
   }
+  
+  StartFadeIn() {
+    console.log("StartFadeIn");
+    this.fade_in_countdown_ms = FADE_IN_COUNTDOWN_MS; 
+  }
+  
+  IsFadingIn() { return (this.fade_in_countdown_ms > 0); }
   
   // Returns [collided, MTD]
   static BoxBoxCollision(A, B) {
@@ -256,7 +269,7 @@ class PoShape {
     }
   }
   
-  OnNewFrame() {
+  OnNewFrame(dt) {
     this.SetIsCollided(false);
     this.v_q = new p5.Vector(0, 0);
     this.j_q = new p5.Vector(0, 0);
@@ -279,6 +292,21 @@ class PoShape {
         default:
           break;
       }
+    }
+    
+    const cd = this.fade_in_countdown_ms;
+    if (cd > 0) {
+      console.log("cd=" + cd);
+      let cd1 = cd - dt;
+      if (cd1 < 0) { cd1 = 0; }
+      let c = 1.0 - cd1 / FADE_IN_COUNTDOWN_MS;
+      c = 1 - (1-c)*(1-c)
+      if (this instanceof PoCircle) {
+        this.r = c * this.r0;
+      } else if (this instanceof PoRect) {
+        this.hw = c * this.hw0; this.hh = c * this.hh0;
+      }
+      this.fade_in_countdown_ms = cd1;
     }
   }
   
@@ -377,7 +405,9 @@ class PoShape {
 class PoRect extends PoShape {
   constructor(hw, hh) {
     super();
-    this.hw = hw; this.hh = hh;
+    this.hw  = hw; this.hh  = hh;
+    this.hw0 = hw; this.hh0 = hh;
+    
     let mass = 4 * hw * hh;
     this.inv_mass = 1 / mass;
     let inertia = 8 / 3 * (hw*hw + hh*hh) * mass;
@@ -500,6 +530,7 @@ class PoCircle extends PoShape {
   constructor(r) {
     super();
     this.r = r;
+    this.r0 = r;
     let mass = PI * r * r;
     this.inv_mass = 1 / mass;
     let inertia = 0.5 * mass * r * r
@@ -799,6 +830,7 @@ class PoScene {
       const ab = new PoCircle(SIZES[tag][1]);
       ab.tag = tag;
       ab.pos = a.pos.copy().add(b.pos).mult(0.5);
+      ab.StartFadeIn();
       this.shapes.push(ab);
     }
   }
@@ -819,6 +851,7 @@ class PoScene {
         ab.tag = a.tag + 1;
       }
       ab.pos = a.pos.copy().add(b.pos).mult(0.5);
+      ab.StartFadeIn();
       this.shapes.push(ab);
     }
   }
@@ -834,11 +867,15 @@ class PoScene {
       ab.tag = tag;
       ab.pos = a.pos.copy().add(b.pos).mult(0.5);
       this.shapes.push(ab);
+      ab.StartFadeIn();
     }
   }
   
   // 合成
   Union(a, b) {
+    
+    if (a.IsFadingIn() || b.IsFadingIn()) return;
+    
     if (a.type == "circle" && b.type == "circle") {
       this.do_UnionCircles(a, b);
     } else if (a.type == "rect" && b.type == "rect") {
@@ -854,7 +891,7 @@ class PoScene {
   Step(dt) {
     // OnNewFrame and Gravity
     this.shapes.forEach((s) => {
-      s.OnNewFrame();
+      s.OnNewFrame(dt);
       if (s.inv_mass > 0) {
         s.QueueImpulseInstant(new p5.Vector(0, GRAVITY*dt/s.inv_mass), new p5.Vector(0,0));
       }

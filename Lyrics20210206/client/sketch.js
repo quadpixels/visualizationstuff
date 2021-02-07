@@ -23,7 +23,7 @@
 let socket;
 let g_token;
 let g_state = {
-  game_title: "《合成大音符》",
+  game_title: "《合成高音符》",
   cxn_state: "未连接",
   turn_info: "",
 };
@@ -239,7 +239,7 @@ function draw() {
     push();
     g_viewport.Apply();
     const dt = min(0.5, delta_ms / 100);
-    const N = 10;
+    const N = 4;
     if (!g_paused) {
       for (let i=0; i<N; i++) {
         g_scene.Step(dt / N);
