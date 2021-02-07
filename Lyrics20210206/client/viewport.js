@@ -18,6 +18,21 @@ class Viewport {
     
     this.dummy = new p5.Vector(0,0);
     this.x0 = 406; // 总是回到这里
+    this.saved_state = "";
+  }
+  
+  // 用于应对UI按钮不需要受Viewport影响的情况
+  Save() { this.saved_state = JSON.stringify(this); }
+  Load() {
+    const s = JSON.parse(this.saved_state);
+    Object.assign(this, s);
+    this.pos = new p5.Vector(); Object.assign(this.pos, s.pos);
+    this.dummy = new p5.Vector(); Object.assign(this.dummy, s.dummy);
+  }
+  Identity() {
+    this.pos.x = width / 2;
+    this.pos.y = height / 2;
+    this.scale = 1; this.rot = 0;
   }
 
   Update(delta_millis) {
@@ -142,6 +157,7 @@ class Viewport {
   
   StartDrag() {
     this.target_pos = undefined;
+    console.log(this.pos);
     this.pos_backup = this.pos.copy();
   }
   

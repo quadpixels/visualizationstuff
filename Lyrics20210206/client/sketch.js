@@ -1,13 +1,9 @@
 // 2021-02-01
-
-// todo:
-// 同步游戏状态
-// 操纵游戏玩法
 //
-// 5）音符功能 --- MVP
-// 加一根红线表示游戏结束的上限 --- MVP
-// 
-// 1) 球落地会跳起来
+// [done] 音符功能
+// [done] 加一根红线表示游戏结束的上限
+// ??? 消失时的动画 
+// [done] 球落地会跳起来：原因是摩擦力计算错误，已修复
 // 2) 一个人玩的时候会无法扔
 // 3）手臂不能超出范围
 // 4）合成时的变化有点快
@@ -19,6 +15,10 @@
 // 方法二：每次只有一个人能动
 // 
 // 在某些场景中触发墙壁上平移
+// - 要么“轮到”显示得明显一些, 或者 自动N秒扔一下
+// 加【观察模式】
+// 还是有当有人离场时剩下的人会没法扔的bug
+// sudden death
 
 let socket;
 let g_token;
@@ -30,6 +30,7 @@ let g_state = {
 let g_scene = undefined;
 let g_cand = undefined;
 
+const PHYS_W = 400, PHYS_H = 720;
 const DEBUG_DRAG = true;
 let g_flags = [0,0,0];
 
@@ -37,24 +38,26 @@ let g_flags = [0,0,0];
 let g_btn_connect;
 let g_room_buttons = [];
 let g_buttons = [], g_textlabels = [];
+let g_skip_animation = false;
 
 let g_hovered_block;
 let g_viewport;
 let g_dirty = 0;
+let g_ythresh = 10;
 
 let g_paused = false;
-
+let g_animator;
 let g_ball;
 
 let SNAPSHOT_INTERVAL = 1000; // 1000ms
 let g_snapshot_interval_countdown = SNAPSHOT_INTERVAL;
-
+let g_drag_is_release = false;
 let THETA_UPDATE_INTERVAL = 100;
 let g_theta_update_countdown = THETA_UPDATE_INTERVAL;
 
 // 侯选区
 let g_thetas = [3.1415/2, 3.1415*0.75]; // 手臂的角度，顺时针旋转
-const THETA_CHANGE_RATE = 3.1415/2;
+const THETA_CHANGE_RATE = 3.1415 * 0.76;
 // 所有人的theta的平滑过渡
 let g_theta_targets = [];
 
@@ -87,6 +90,7 @@ function setup() {
   createCanvas(400, 720);
   ConnectToServer();
   g_atlas = new Atlas(g_image0);
+  g_animator = new Animator();
 
   // 按钮
   g_btn_connect = new PushButton(100, 20, new p5.Vector(8, 32), "连接服务器", function() {
@@ -98,10 +102,11 @@ function setup() {
   g_textlabels.push(new TextLabel(100, 20, new p5.Vector(268, 8), "turn_info", 12));
 
   g_viewport = new Viewport();
-  g_viewport.pos.x = width / 2;
-  g_viewport.pos.y = height / 2;
+  g_viewport.pos.x = PHYS_W / 2;
+  g_viewport.pos.y = PHYS_H / 2;
   
   //g_cand = new PoCircle(4);
+  g_ythresh = PHYS_W / 2;
 }
 
 if (!Array.prototype.remove) {
@@ -172,6 +177,19 @@ function draw() {
   const ms = millis();
   const delta_ms = ms - g_last_millis;
   g_last_millis = ms;
+  
+  if (g_countdown_ms > 0) {
+    g_countdown_ms -= delta_ms;
+    if (g_countdown_ms <= 0) {
+      if (g_countdown_ms_prev > 0) {
+        // 倒计时到了
+        socket.emit("request_release_candidate");
+      }
+    }
+  }
+  g_countdown_ms_prev = g_countdown_ms;
+  g_animator.Update();
+
   background(220);
   
   // Update UI event
@@ -204,31 +222,34 @@ function draw() {
       g_thetas[i] = vout;
     }
   }
-  
+
   g_theta_update_countdown -= delta_ms;
   if (g_theta_update_countdown < 0) {
     g_theta_update_countdown = THETA_UPDATE_INTERVAL;
     SendMyThetaIfNeeded(g_thetas[g_rank], g_rank);
   }
-  
+
+  g_viewport.Save();
+  g_viewport.Identity();
   UpdateHover();
-  if (DEBUG_DRAG) {
-    push();
-    
-    pop();
-  }
-  
+  g_viewport.Load();
+
   // phys
   if (g_scene != undefined) {
+    push();
+    g_viewport.Apply();
     const dt = min(0.5, delta_ms / 100);
-    const N = 3;
+    const N = 10;
     if (!g_paused) {
       for (let i=0; i<N; i++) {
         g_scene.Step(dt / N);
       }
     }
-    g_scene.Render();
     
+    g_scene.Render();
+    stroke("#F88");
+    line(0, g_ythresh, PHYS_W, g_ythresh);
+
     if (g_is_host) {
       g_snapshot_interval_countdown -= delta_ms;
       if (g_snapshot_interval_countdown < 0) {
@@ -236,36 +257,35 @@ function draw() {
         g_snapshot_interval_countdown = SNAPSHOT_INTERVAL;
       }
     }
-  }
-  
-  // 手臂
-  push();
-  fill("#AAA"); stroke(0);
-  if (g_thetas.length > 0) {
-    let pts = [];
-    let p0 = new p5.Vector(width/2, 0);
-    pts.push(p0);
-    const L = width / 2 / g_thetas.length;
-    for (let i=0; i<g_thetas.length; i++) {
-      const a = g_thetas[i];
-      let delta = new p5.Vector(L*cos(a), L*sin(a));
-      
-      p0 = p0.copy().add(delta);
+    
+    // 手臂
+    fill("#AAA"); stroke(0);
+    if (g_thetas.length > 0 && g_room_id != undefined) {
+      let pts = [];
+      let p0 = new p5.Vector(width/2, 0);
       pts.push(p0);
+      const L = width / 2 / g_thetas.length;
+      for (let i=0; i<g_thetas.length; i++) {
+        const a = g_thetas[i];
+        let delta = new p5.Vector(L*cos(a), L*sin(a));
+        
+        p0 = p0.copy().add(delta);
+        pts.push(p0);
+      }
+      push();
+      for (let i=0; i<pts.length-1; i++) {
+        if (i == g_rank) { stroke("#33F"); } else { stroke("#333"); }
+        line(pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y); 
+      } 
+      pop();
+      for (let i=0; i<pts.length; i++) { circle(pts[i].x, pts[i].y, 5); }
+      if (g_cand != undefined) {
+        g_cand.pos = p0.copy();
+        g_cand.Render();
+      }
     }
-    push();
-    for (let i=0; i<pts.length-1; i++) {
-      if (i == g_rank) { stroke("#33F"); } else { stroke("#333"); }
-      line(pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y); 
-    } 
     pop();
-    for (let i=0; i<pts.length; i++) { circle(pts[i].x, pts[i].y, 5); }
-    if (g_cand != undefined) {
-      g_cand.pos = p0.copy();
-      g_cand.Render();
-    }
   }
-  pop();
   
   // 行动次序
   if (g_rank != undefined && g_curr_turn != undefined) {
@@ -281,6 +301,21 @@ function draw() {
   g_buttons.forEach((b) => { b.Render(); });
   g_textlabels.forEach((l) => { l.Render(); });
 
+  if (g_countdown_ms > 0) {
+    const txt = "" + parseInt(g_countdown_ms / 1000);
+    push();
+    textAlign(CENTER, CENTER);
+    textSize(40);
+    noStroke();
+    if (g_countdown_ms <= 3000) {
+      fill("#F88");
+    } else {
+      fill("#888");
+    }
+    text(txt, width/2, 40);
+    pop();
+  }
+  
   // Dragging the hand segment.
   if (g_touch_state != undefined) {
     let txt = "Drag: (" + g_last_mouse_pos[0] + "," + g_last_mouse_pos[1] +
@@ -289,7 +324,8 @@ function draw() {
     noStroke();
     fill(0);
     textAlign(LEFT, TOP);
-    text(txt, 0, 0);
+    //text(txt, 0, 0);
+    text(""+g_drag_is_release, 0, 0);
     
     const x0 = g_last_mouse_pos[0], y0 = g_last_mouse_pos[1];
     const x1 = x0 - g_viewport_drag_x, y1 = y0 - g_viewport_drag_y;
@@ -299,13 +335,23 @@ function draw() {
     //arc(x0, y0, 2*R, 2*R, g_theta_min, g_theta_max, PIE);
     Draw2DTorus(x0, y0, R0, R1, g_theta_min, g_theta_max);
     noFill();
-    stroke("rgba(32,192,255,1)");
-    
     
     let drag_dir = new p5.Vector(-g_viewport_drag_x, -g_viewport_drag_y);
     let drag_heading = drag_dir.heading();
     if (drag_heading < 0) drag_heading += 2*PI;
     const drag_mag = drag_dir.mag();
+    const R2 = 100, R3 = 200, theta2 = (1.5 - 0.1) * PI, theta3 = (1.5+0.1)*PI;
+    if (drag_mag > R2 && drag_mag < R3 && drag_heading > theta2 && drag_heading < theta3) {
+      g_drag_is_release = true;
+    } else g_drag_is_release = false;
+    
+    if (g_drag_is_release)
+      fill("rgba(32,255,32,1)");
+    else
+      fill("rgba(32,255,32,0.3)");
+    Draw2DTorus(x0, y0, R2, R3, theta2, theta3);
+    
+    stroke("rgba(32,192,255,1)");
     
     // 下半圈：控制角度
     if (drag_mag >= R0 && drag_mag <= R1 &&
@@ -367,6 +413,10 @@ function InitializeGame() {
 // Tag
 function GenCandidate() {
   let avg_tag = 0, n = 1;
+  
+  let dist = [];
+  for (let i=0; i<MAX_TAG; i++) dist.push(0);
+  
   if (g_scene != undefined) {
     g_scene.shapes.forEach((s) => {
       if (s.tag != undefined) {
@@ -376,14 +426,18 @@ function GenCandidate() {
     });
   } else { avg_tag = 1; }
   
-  avg_tag /= n;
+  avg_tag = parseInt(avg_tag / n);
   const tag = 1 + parseInt(random(1+avg_tag));
+  const S = SIZES[avg_tag];
+  
+  console.log(avg_tag);
+  console.log(S);
   
   let cand;
   if (Math.random() < 0.5) {
-    cand = new PoRect(Math.random()*30 + 20, Math.random()*30 + 20);
+    cand = new PoRect(Math.random()*S[0] + S[1], Math.random()*S[0] + S[1]);
   } else {
-    cand = new PoCircle(Math.random()*30 + 20);
+    cand = new PoCircle(Math.random()*S[0] + S[1]);
   }
   cand.tag = tag;
   g_cand = cand;
@@ -449,4 +503,9 @@ function keyPressed() {
 
 function keyReleased() {
   if (key == "d" || key == "a") { g_flags[0] = 0; }
+}
+
+function GameOver() {
+  StopCountdown();
+  g_paused = true;
 }

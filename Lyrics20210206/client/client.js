@@ -10,9 +10,14 @@ var g_game_status = GAME_STATUS_LOBBY;
 
 let g_theta_min = 0, g_theta_max = 3.14159;
 
-//var SERVER_ADDR = "http://107.178.219.255:3000";
-//var SERVER_ADDR = "http://127.0.0.1:3001";
-var SERVER_ADDR = "http://192.168.8.230:3001";
+let g_auto_drop = false;
+
+let g_countdown_ms = 0;
+let g_countdown_ms_prev = -999;
+
+//var SERVER_ADDR = "http://104.197.213.64:3000";
+var SERVER_ADDR = "http://127.0.0.1:3001";
+//var SERVER_ADDR = "http://192.168.8.230:3001";
 
 function ConnectToServer() {
   g_room_id = undefined;
@@ -40,6 +45,7 @@ function ConnectToServer() {
     g_room_id = room_id;
     HideRoomButtons();
     g_game_status = GAME_STATUS_INGAME;
+    console.log("xx");
   });
   
   socket.on("join_game_failed", ()=>{
@@ -69,14 +75,13 @@ function ConnectToServer() {
   });
   
   socket.on("thetas", (thetas) => {
-    //g_thetas = thetas;
-    g_theta_targets = thetas;
-    g_theta_targets[g_rank] = undefined;
+    g_thetas = thetas;
   });
   
   socket.on("theta_one", (theta, rank) => {
     if (rank < g_thetas.length && rank != this.rank) {
-      g_thetas[rank] = theta;
+      //g_thetas[rank] = theta;
+      g_theta_targets[rank] = theta;
     }
   });
   
@@ -113,6 +118,9 @@ function ConnectToServer() {
   
   socket.on("curr_turn", (turn, num_players) => {
     g_curr_turn = turn;
+    if (g_rank == turn) {
+      StartCountdown(10);
+    }
     g_num_players = num_players;
   });
 }
@@ -151,4 +159,13 @@ function SendCandidate() {
   const s = JSON.stringify(g_cand);
   //console.log(">> SendCandidate " + s);
   socket.emit("cand", s);
+}
+
+function StartCountdown(secs) {
+  g_countdown_ms = secs * 1000;
+}
+
+function StopCountdown() {
+  g_countdown_ms      = 0;
+  g_countdown_ms_prev = 0;
 }

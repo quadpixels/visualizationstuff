@@ -1,7 +1,7 @@
 const RESTITUTIONS = [ 0.3, 0.3, 0 ];
 let RESTITUTION = 0.3;
-const FRIC_DYNAMIC = 0.3;
-const FRIC_STATIC = 0.1;
+const FRIC_DYNAMIC = 0.67;
+const FRIC_STATIC = 0.8;
 const GRAVITY = 9.8;
 const MY_DEBUG = false;
 
@@ -15,6 +15,19 @@ const COLORS = [
   "#AEE",
   "#A3E",
 ]
+
+const SIZES = 
+[
+  [ 3, 15 ],
+  [ 3, 35 ],
+  [ 2, 35 ],
+  [ 2, 45 ],
+  [ 2, 40 ],
+  [ 2, 70 ],
+  [ 2, 70 ],
+  [ 2, 100 ],
+]
+
 const MAX_TAG = 8;
 
 // XY Limits for physical computation
@@ -95,6 +108,8 @@ class PoShape {
     this.omega_prev = 0;
     this.type = "";
     this.tex = undefined;
+    
+    this.state = 0; // 0：刚扔下来，1：已经在下方了
   }
   
   // Returns [collided, MTD]
@@ -247,6 +262,24 @@ class PoShape {
     this.j_q = new p5.Vector(0, 0);
     this.torque_q = 0;
     this.pos_prev = this.pos.copy();
+    
+    if (this != g_cand) {
+      // Combine 专用
+      switch (this.state) {
+        case 0:
+          if (this.pos.y >= g_ythresh) {
+            this.state = 1;
+          }
+          break;
+        case 1:
+          if (this.pos.y < g_ythresh && this.pos_prev.y >= g_ythresh) {
+            GameOver();
+          }
+          break;
+        default:
+          break;
+      }
+    }
   }
   
   SetIsCollided(is_collided) {
@@ -759,41 +792,46 @@ class PoScene {
   }
   
   do_UnionCircles(a, b) {
-    const ab = new PoCircle(max(a.r, b.r)*1.2);
-    ab.tag = a.tag + 1;
-    
+    const tag = a.tag + 1;
     this.shapes.remove(a);
     this.shapes.remove(b);
-    if (ab.tag < MAX_TAG) {
+    if (tag < MAX_TAG) {
+      const ab = new PoCircle(SIZES[tag][1]);
+      ab.tag = tag;
       ab.pos = a.pos.copy().add(b.pos).mult(0.5);
       this.shapes.push(ab);
     }
   }
   do_UnionCircleRect(a, b) {
-    let ab;
-    if (Math.random() < 0.5) {
-      const new_hh = max(max(0.5*(b.hh, b.hw)), a.r)*1.05;
-      const new_hw = new_hh * (0.9+Math.random()*0.2);
-      ab = new PoRect(new_hw, new_hh);
-      ab.tag = a.tag + 1;
-    } else {
-      ab = new PoCircle(max(max(b.hh, b.hw)*0.5, a.r)*1.05);
-      ab.tag = a.tag + 1;
-    }
+    const tag = a.tag + 1;
     this.shapes.remove(a);
     this.shapes.remove(b);
-    if (ab.tag < MAX_TAG) {
+    if (tag < MAX_TAG) {
+      const S = SIZES[tag][1];
+      let ab;
+      if (Math.random() < 0.5) {
+        const new_hh = S;
+        const new_hw = S;
+        ab = new PoRect(new_hw, new_hh);
+        ab.tag = a.tag + 1;
+      } else {
+        ab = new PoCircle(S);
+        ab.tag = a.tag + 1;
+      }
       ab.pos = a.pos.copy().add(b.pos).mult(0.5);
       this.shapes.push(ab);
     }
   }
+  
   do_UnionRects(a, b) {
     let ab;
-    ab = new PoRect(0.6*(a.hw+b.hw), 0.6*(a.hh+b.hh));
-    ab.tag = a.tag + 1;
+    const tag = a.tag + 1;
     this.shapes.remove(a);
     this.shapes.remove(b);
-    if (ab.tag < MAX_TAG) {
+    if (tag < MAX_TAG) {
+      const S = SIZES[tag][1];
+      ab = new PoRect(S, S);
+      ab.tag = tag;
       ab.pos = a.pos.copy().add(b.pos).mult(0.5);
       this.shapes.push(ab);
     }
@@ -904,12 +942,12 @@ class PoScene {
     this.shapes.push(temp1);
       
     let temp2 = new PoRect(10, height/2);
-    temp2.pos = new p5.Vector(11, height/2);
+    temp2.pos = new p5.Vector(-10, height/2);
     temp2.SetInfiniteMass();
     this.shapes.push(temp2);
   
     temp2 = new PoRect(10, height/2);
-    temp2.pos = new p5.Vector(width-11, height/2);
+    temp2.pos = new p5.Vector(width+10, height/2);
     temp2.SetInfiniteMass();
       
     this.shapes.push(temp2);

@@ -102,6 +102,9 @@ function TouchOrMouseEnded(event) {
               }
             }
           }
+          
+          if (g_drag_is_release)
+            socket.emit("request_release_candidate");
         }
       }
     }
@@ -122,6 +125,8 @@ function TouchOrMouseEnded(event) {
           }
         }
       }
+      if (g_drag_is_release)
+          socket.emit("request_release_candidate");
     }
   }
 }
