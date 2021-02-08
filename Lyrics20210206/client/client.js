@@ -6,17 +6,23 @@ var g_curr_turn = 0;
 var g_num_players = 0;
 const GAME_STATUS_LOBBY = "lobby";
 const GAME_STATUS_INGAME = "ingame";
+const GAME_STATUS_GAMEOVER = "gameover";
+var g_is_observer = false;
 var g_game_status = GAME_STATUS_LOBBY;
 
 let g_theta_min = 0, g_theta_max = 3.14159;
+let g_score = {
+  score: 0,
+  combine_occ: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+};
 
 let g_auto_drop = false;
 
 let g_countdown_ms = 0;
 let g_countdown_ms_prev = -999;
 
-//var SERVER_ADDR = "http://104.197.213.64:3000";
-var SERVER_ADDR = "http://127.0.0.1:3001";
+var SERVER_ADDR = "http://104.197.213.64:3000";
+//var SERVER_ADDR = "http://127.0.0.1:3001";
 //var SERVER_ADDR = "http://192.168.8.230:3001";
 
 function ConnectToServer() {
@@ -32,7 +38,6 @@ function ConnectToServer() {
   });
   
   socket.on("roomstate", (room_states)=>{
-    console.log("<< roomstate");
     SpawnRoomButtons(room_states);
   });
   
@@ -41,28 +46,42 @@ function ConnectToServer() {
   });
   
   socket.on("joined_game", (room_id)=>{
-    g_state.cxn_state = "房间 " + room_id + "（玩家）";
+    g_state.cxn_state = "";
+    g_state.room_info = "房间 " + room_id + "（玩家）";
     g_room_id = room_id;
     HideRoomButtons();
-    g_game_status = GAME_STATUS_INGAME;
-    console.log("xx");
+    StartGame();
+  });
+  
+  socket.on("joined_game_observer", (room_id)=>{
+    g_state.cxn_state = "";
+    g_state.room_info = "房间 " + room_id + "（观察者）";
+    g_room_id = room_id;
+    HideRoomButtons();
+    StartGame();
   });
   
   socket.on("join_game_failed", ()=>{
     console.log("加入房间失败");
   });
   
-  socket.on("poscene_snapshot", (snapshot)=>{
+  socket.on("join_game_failed_room_full", ()=> {
+    ShowBanner("该房间已经满了", 1000);
+  });
+  
+  socket.on("poscene_snapshot", (snapshot, scores)=>{
     Load(snapshot);
+    g_score = JSON.parse(scores);
   });
   
   socket.on("become_room_host", (room_id)=>{
       console.log("<< become_room_host");
     g_is_host = true;
-    g_state.cxn_state = "房间 " + room_id + "（房主）";
+    g_state.room_info = "房间 " + room_id + "（房主）";
     g_room_id = room_id;
     GenCandidate();
     SendCandidate();
+    OnTurnChanged();
   });
   
   socket.on("initialize_game", ()=>{
@@ -75,13 +94,20 @@ function ConnectToServer() {
   });
   
   socket.on("thetas", (thetas) => {
-    g_thetas = thetas;
+    console.log("thetas ");
+    console.log(thetas);
+    while (g_thetas.length < thetas.length) g_thetas.push(3.1415/2);
+    while (g_thetas.length > thetas.length) g_thetas.pop();
+    g_thetas = thetas.slice();
+    g_theta_targets = thetas.slice();
+    console.log(g_thetas)
+    console.log(g_theta_targets)
   });
   
   socket.on("theta_one", (theta, rank) => {
     if (rank < g_thetas.length && rank != this.rank) {
-      //g_thetas[rank] = theta;
       g_theta_targets[rank] = theta;
+      while (g_thetas.length > g_theta_targets.length) g_thetas.pop();
     }
   });
   
@@ -100,6 +126,7 @@ function ConnectToServer() {
       Object.assign(g_cand, j);
       console.log(g_cand);
     }
+    g_cand.StartFadeIn();
   });
   
   socket.on("release_candidate", () => {
@@ -113,15 +140,23 @@ function ConnectToServer() {
     if (g_is_host) {
       GenCandidate();
       SendCandidate();
+      StopCountdown();
     }
   });
   
   socket.on("curr_turn", (turn, num_players) => {
     g_curr_turn = turn;
-    if (g_rank == turn) {
+    if (g_rank == turn && g_game_status == GAME_STATUS_INGAME) {
       StartCountdown(10);
+      OnTurnChanged();
     }
     g_num_players = num_players;
+  });
+  
+  socket.on("gameover", ()=>{
+    StopCountdown();
+    g_state.turn_info = "游戏结束啦";
+    do_GameOver();
   });
 }
 
@@ -135,17 +170,21 @@ function JoinRoom(rid) {
   socket.emit("join_room", rid);
 }
 
+function JoinRoomAsObserver(rid) {
+  console.log(">> [JoinRoom] " + rid);
+  socket.emit("join_room_observer", rid);
+}
+
 function SendSnapshotToRoom() {
   if (g_room_id != undefined && g_is_host == true) {
-    console.log(">> [SendSnapshotToRoom]");
     const snapshot = JSON.stringify(g_scene);
-    socket.emit("poscene_snapshot", snapshot);
+    const scores   = JSON.stringify(g_score);
+    socket.emit("poscene_snapshot", snapshot, scores);
   }
 }
 
 function SendMyThetaIfNeeded(value, g_rank) {
-  if (g_last_my_theta != value) {
-    console.log(">> theta_one");
+  if (g_last_my_theta != value && !g_is_observer) {
     socket.emit("theta_one", value, g_rank);
     g_last_my_theta = value;
   }
@@ -153,6 +192,7 @@ function SendMyThetaIfNeeded(value, g_rank) {
 
 function RequestReleaseCandidate() {
   socket.emit("request_release_candidate");
+  StopCountdown();
 }
 
 function SendCandidate() {

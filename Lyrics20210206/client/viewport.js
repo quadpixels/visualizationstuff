@@ -157,7 +157,6 @@ class Viewport {
   
   StartDrag() {
     this.target_pos = undefined;
-    console.log(this.pos);
     this.pos_backup = this.pos.copy();
   }
   

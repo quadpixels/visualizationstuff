@@ -34,7 +34,7 @@ function InertiaMove() {
 
 // Firefox的鼠标不会产生Touch事件
 function TouchOrMouseStarted(event) {
-  if (event instanceof TouchEvent && g_touch_state == undefined &&
+  if (window.TouchEvent && event instanceof TouchEvent && g_touch_state == undefined &&
       touches.length == 1) { 
     g_touch_state = "touch";
     g_pointer_x = touches[0].x;
@@ -79,7 +79,7 @@ function TouchOrMouseEnded(event) {
   const x0 = g_drag_start_mouse_pos[0],
         x1 = g_drag_start_mouse_pos[1];
   
-  if (event instanceof TouchEvent) {
+  if (window.TouchEvent && event instanceof TouchEvent) { // TouchEvent for FF
     if (g_touch_state == "touch") {
       for (let t of event.changedTouches) {
         if (t.identifier == g_touch0_identifier) {
@@ -103,8 +103,9 @@ function TouchOrMouseEnded(event) {
             }
           }
           
-          if (g_drag_is_release)
-            socket.emit("request_release_candidate");
+          if (g_drag_is_release) {
+            RequestReleaseCandidate();
+          }
         }
       }
     }
@@ -125,8 +126,9 @@ function TouchOrMouseEnded(event) {
           }
         }
       }
-      if (g_drag_is_release)
-          socket.emit("request_release_candidate");
+      if (g_drag_is_release) {
+        RequestReleaseCandidate();
+      }
     }
   }
 }

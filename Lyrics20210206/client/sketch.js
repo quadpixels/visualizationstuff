@@ -25,6 +25,8 @@ let g_token;
 let g_state = {
   game_title: "《合成高音符》",
   cxn_state: "未连接",
+  cxn_role: "选择了游戏者身份",
+  room_info: "",
   turn_info: "",
 };
 let g_scene = undefined;
@@ -35,7 +37,7 @@ const DEBUG_DRAG = true;
 let g_flags = [0,0,0];
 
 // 从之前的脚本里来的
-let g_btn_connect;
+let g_btn_connect, g_btn_player, g_btn_observer;
 let g_room_buttons = [];
 let g_buttons = [], g_textlabels = [];
 let g_skip_animation = false;
@@ -44,16 +46,29 @@ let g_hovered_block;
 let g_viewport;
 let g_dirty = 0;
 let g_ythresh = 10;
+let g_gameover_detector = undefined;
 
 let g_paused = false;
 let g_animator;
 let g_ball;
+let g_viewmode = 0;
 
 let SNAPSHOT_INTERVAL = 1000; // 1000ms
 let g_snapshot_interval_countdown = SNAPSHOT_INTERVAL;
 let g_drag_is_release = false;
 let THETA_UPDATE_INTERVAL = 100;
 let g_theta_update_countdown = THETA_UPDATE_INTERVAL;
+
+let g_scorepanel;
+
+let g_banner_text = "";
+let g_banner_countdown = 0;
+let g_banner_duration = 0;
+function ShowBanner(txt, ms) {
+  g_banner_duration = ms;
+  g_banner_countdown = ms;
+  g_banner_text = txt;
+}
 
 // 侯选区
 let g_thetas = [3.1415/2, 3.1415*0.75]; // 手臂的角度，顺时针旋转
@@ -82,6 +97,43 @@ class Atlas {
   }
 }
 
+class ScorePanel {
+  constructor() {
+    this.x = -88;
+    this.y = 80;
+    this.w = 72;
+    this.h = 435;
+  }
+  
+  Render() {
+    push();
+    noFill();
+    stroke("#333");
+    rect(this.x, this.y, this.w, this.h);
+    
+    const PAD = 10, IMG_W = 32;
+    const y0 = this.y+PAD+IMG_W/2, y1 = this.y+this.h-PAD-IMG_W/2;
+    const x = this.x+3+IMG_W/2;
+    imageMode(CENTER);
+    textSize(18);
+    noStroke();
+
+    const occ = g_score.combine_occ;
+    for (let i=1; i<10; i++) {
+      stroke(COLORS[i]);
+      fill(0);
+      const y = map(i, 1, 9, y0, y1);
+      g_atlas.Render(i, x, y, IMG_W, IMG_W);
+      textAlign(RIGHT, CENTER);
+      if (i < occ.length) {
+        text("" + occ[i], this.x + this.w - 5, y + 3);
+      }
+    }
+
+    pop();
+  }
+}
+
 function preload() {
   g_image0 = loadImage("image0.png");
 }
@@ -93,13 +145,36 @@ function setup() {
   g_animator = new Animator();
 
   // 按钮
-  g_btn_connect = new PushButton(100, 20, new p5.Vector(8, 32), "连接服务器", function() {
+  g_btn_connect = new PushButton(100, 20, new p5.Vector(292, 8), "连接服务器", function() {
     ConnectToServer();
   }); 
   g_buttons.push(g_btn_connect)
+  
+  g_btn_player = new PushButton(100, 40, new p5.Vector(108, 52), "我要玩", function() {
+    g_state.cxn_role = "身份：游戏者";
+    g_is_observer = false;
+  });
+  g_buttons.push(g_btn_player);
+  g_btn_player.OnClick();
+  
+  g_btn_observer = new PushButton(100, 40, new p5.Vector(216, 52), "我要围观", function() {
+    g_state.cxn_role = "身份：观察者";
+    g_is_observer = true;
+  });
+  g_buttons.push(g_btn_observer);
 
-  g_textlabels.push(new TextLabel(100, 20, new p5.Vector(8, 8), "cxn_state", 12));
-  g_textlabels.push(new TextLabel(100, 20, new p5.Vector(268, 8), "turn_info", 12));
+  let tl;
+  tl = new TextLabel(100, 20, new p5.Vector(8, 8), "cxn_state", 12);
+  g_textlabels.push(tl);
+  tl = new TextLabel(100, 20, new p5.Vector(8, 8), "turn_info", 12);
+  tl.textcolor = "#333";
+  g_textlabels.push(tl);
+  tl = new TextLabel(100, 20, new p5.Vector(268, 8), "room_info", 12);
+  tl.textcolor = "#000";
+  tl.align = RIGHT;
+  g_textlabels.push(tl);
+  tl = new TextLabel(100, 20, new p5.Vector(8, 52), "cxn_role", 12);
+  g_textlabels.push(tl);
 
   g_viewport = new Viewport();
   g_viewport.pos.x = PHYS_W / 2;
@@ -107,6 +182,10 @@ function setup() {
   
   //g_cand = new PoCircle(4);
   g_ythresh = PHYS_W / 2;
+  g_gameover_detector = new PoRect(PHYS_W/2, PHYS_H/8);
+  g_gameover_detector.pos.y = PHYS_H/8;
+  
+  g_scorepanel = new ScorePanel();
 }
 
 if (!Array.prototype.remove) {
@@ -118,8 +197,8 @@ if (!Array.prototype.remove) {
 
 // 更新房间列表状态
 function SpawnRoomButtons(room_states) {
-  const bw = 32, bh = 20, pad = 4;
-  const x0 = 8, y0 = 60;
+  const bw = 64, bh = 40, pad = 4;
+  const x0 = 8, y0 = 120;
   let x = x0, y = y0;
   
   g_room_buttons.forEach((b) => g_buttons.remove(b));
@@ -129,11 +208,18 @@ function SpawnRoomButtons(room_states) {
     let b;
     if (rs == "vacant") {
       b = new PushButton(bw, bh, new p5.Vector(x, y), ""+(i+1), ()=>{
-        CreateNewGame(i);
+        if (g_is_observer) {
+        } else {
+          CreateNewGame(i);
+        }
       });
     } else {
       b = new PushButton(bw, bh, new p5.Vector(x, y), ""+(i+1), ()=>{
-        JoinRoom(i);
+        if (g_is_observer) {
+          JoinRoomAsObserver(i);
+        } else {
+          JoinRoom(i);
+        }
       });
       b.bgcolor = "rgba(128,225,128,1)";
     }
@@ -149,6 +235,9 @@ function HideRoomButtons() {
   g_room_buttons.forEach((b) => g_buttons.remove(b));
   g_room_buttons = [];
   g_btn_connect.is_active = false;
+  g_btn_player.is_active = false;
+  g_btn_observer.is_active = false;
+  g_state.cxn_role = "";
 }
 
 function Draw2DTorus(x, y, r0, r1, theta0, theta1) {
@@ -183,7 +272,7 @@ function draw() {
     if (g_countdown_ms <= 0) {
       if (g_countdown_ms_prev > 0) {
         // 倒计时到了
-        socket.emit("request_release_candidate");
+        RequestReleaseCandidate();
       }
     }
   }
@@ -253,7 +342,9 @@ function draw() {
     if (g_is_host) {
       g_snapshot_interval_countdown -= delta_ms;
       if (g_snapshot_interval_countdown < 0) {
-        SendSnapshotToRoom();
+        if (g_game_status != GAME_STATUS_GAMEOVER) {
+          SendSnapshotToRoom();
+        }
         g_snapshot_interval_countdown = SNAPSHOT_INTERVAL;
       }
     }
@@ -262,9 +353,9 @@ function draw() {
     fill("#AAA"); stroke(0);
     if (g_thetas.length > 0 && g_room_id != undefined) {
       let pts = [];
-      let p0 = new p5.Vector(width/2, 0);
+      let p0 = new p5.Vector(PHYS_W/2, 0);
       pts.push(p0);
-      const L = width / 2 / g_thetas.length;
+      const L = PHYS_W / 2 / g_thetas.length;
       for (let i=0; i<g_thetas.length; i++) {
         const a = g_thetas[i];
         let delta = new p5.Vector(L*cos(a), L*sin(a));
@@ -286,21 +377,11 @@ function draw() {
     }
     pop();
   }
-  
-  // 行动次序
-  if (g_rank != undefined && g_curr_turn != undefined) {
-    let txt = "";
-    let n = g_rank - g_curr_turn;
-    if (n < 0) n += g_num_players;
-    if (n == 0) { txt = "轮到你扔下音符了"; }
-    else if (n == 1) { txt = "下一轮就该你了"; }
-    else { txt = "还有 " + n + " 轮到你"; }
-    g_state.turn_info = txt;
-  }
 
   g_buttons.forEach((b) => { b.Render(); });
   g_textlabels.forEach((l) => { l.Render(); });
 
+  // 倒计时
   if (g_countdown_ms > 0) {
     const txt = "" + parseInt(g_countdown_ms / 1000);
     push();
@@ -317,7 +398,9 @@ function draw() {
   }
   
   // Dragging the hand segment.
-  if (g_touch_state != undefined) {
+  if (g_touch_state != undefined   &&
+      g_hovered_block == undefined &&
+      g_game_status == GAME_STATUS_INGAME) {
     let txt = "Drag: (" + g_last_mouse_pos[0] + "," + g_last_mouse_pos[1] +
               ")+(" + g_viewport_drag_x + "," + g_viewport_drag_y;
     push();
@@ -365,6 +448,56 @@ function draw() {
     
     pop();
   }
+  
+  // 分数显示
+  if (g_scene != undefined) {
+    push();
+    const H = 40;
+    textSize(H);
+    textAlign(LEFT, TOP);
+    const dx = 8, dy = 14;       
+    const sc = g_score.score;
+    const w = textWidth(sc);
+    noStroke();
+    fill("rgba(0, 0, 0, 0.3)");
+    rect(dx, dy, w+4, H+4);
+    fill("#FF0");
+    text(sc, dx+2, dy+2);
+    pop();
+  }
+  
+  g_scorepanel.Render();
+  
+  if (g_banner_countdown > 0) {
+    let alpha = g_banner_countdown / g_banner_duration;
+    
+    alpha *= 2;
+    if (alpha > 1) { alpha = 1; }
+    push();
+    textSize(40);
+    noStroke();
+    fill("rgba(0,0,0,0.2)");
+    const x = width/2, y = width/2;
+    rect(0, y-22, width, 44);
+    textAlign(CENTER, CENTER);
+    noStroke();
+    fill("rgba(255,192,192," + alpha + ")");
+    text(g_banner_text, x, y);
+    pop();
+    
+    g_banner_countdown -= delta_ms;
+    if (g_banner_countdown < 0) {
+      g_banner_countdown = 0;
+    }
+  }
+  
+  if (g_viewmode == 1) {
+    push();
+    textSize(16);
+    text("操作方式：\n键盘 [A] [D] 控制方向； [空格] 放下音符\n触屏：在任何地方上滑或下滑",
+      8, 640);
+    pop();
+  }
 }
 
 function keyPressed() {
@@ -389,25 +522,23 @@ function InitializeGame() {
   
   // 测试用场景
   if (true) {
-    for (let i=0; i<1; i++) {
+    for (let i=0; i<3; i++) {
       let c = new PoCircle(12);
       
-      c.pos.x = i*32+44//random() * width;
-      c.pos.y = 200//random() * height;
-      c.tag = 1;
-      g_ball = c;
-      /*
-      let r = random();
-      if (r < 0.2) { c.tex = g_xcjc_textures[0]; }
-      else if (r < 0.6) { c.tex = g_xcjc_textures[1]; }
-      else if (r < 0.8) { c.tex = g_xcjc_textures[2]; }
-      else if (r < 1) { c.tex = g_xcjc_textures[3]; }
-      g_circle = c;
-      */
+      if (true) {
+        //c.pos.x = i*32+44;
+        //c.pos.y = 200;
+        c.pos.x = random() * PHYS_W;
+        c.pos.y = random() * PHYS_H;
+        c.tag = 1;
+        g_ball = c;
+      }
+
       g_scene.shapes.push(c);
     }
   } else {
   }
+  console.log(g_scene.shapes.length)
 }
 
 // Tag
@@ -430,9 +561,6 @@ function GenCandidate() {
   const tag = 1 + parseInt(random(1+avg_tag));
   const S = SIZES[avg_tag];
   
-  console.log(avg_tag);
-  console.log(S);
-  
   let cand;
   if (Math.random() < 0.5) {
     cand = new PoRect(Math.random()*S[0] + S[1], Math.random()*S[0] + S[1]);
@@ -441,6 +569,7 @@ function GenCandidate() {
   }
   cand.tag = tag;
   g_cand = cand;
+  g_cand.StartFadeIn();
 }
 
 var test0;
@@ -495,7 +624,7 @@ function keyPressed() {
   if (key == "a") { g_flags[0] = 1; }
   else if (key == "d") { g_flags[0] = -1; }
   else if (key == ' ') {
-    socket.emit("request_release_candidate");
+    RequestReleaseCandidate();
   } else if (key == 'p') {
     g_paused = !g_paused;
   }
@@ -505,7 +634,71 @@ function keyReleased() {
   if (key == "d" || key == "a") { g_flags[0] = 0; }
 }
 
-function GameOver() {
+function OnTurnChanged() {
+  // 行动次序
+  if (g_rank != undefined && g_curr_turn != undefined) {
+    let txt = "";
+    let n = g_rank - g_curr_turn;
+    if (n < 0) n += g_num_players;
+    if (n == 0) { 
+      txt = "轮到你扔下音符了";
+      if (g_num_players > 1) ShowBanner(txt, 1000);
+    }
+    else if (n == 1) { txt = "下一轮就该你了"; }
+    else { txt = "还有 " + n + " 轮到你"; }
+    g_state.turn_info = txt;
+  }
+}
+
+function StartGame() {
+  if (g_game_status != GAME_STATUS_INGAME) {
+    g_game_status = GAME_STATUS_INGAME;
+    SetViewMode(1);
+  }
+}
+
+function do_GameOver() {
   StopCountdown();
+  g_game_status = GAME_STATUS_GAMEOVER;
   g_paused = true;
+  g_state.turn_info = "游戏结束啦";
+  ShowBanner("游戏结束啦！", 5000);
+}
+
+function GameOver() {
+  do_GameOver();
+  if (!g_is_host) return;
+  socket.emit("gameover");
+  SendSnapshotToRoom();
+}
+
+function GameRestart() {
+
+}
+
+// host 播报给其它玩家
+function AddScore(tag) {
+  if (!g_is_host) return;
+  if (isNaN(tag)) return;
+  let occs = g_score.combine_occ;
+  g_score.score += tag;
+  while (occs.length < tag) {
+    occs.push(0);
+  }
+  occs[tag-1]++;
+  g_score.combine_occ = occs;
+  socket.emit("score", g_score);
+}
+
+// 0：没有控制界面
+// 1：有控制界面
+function SetViewMode(mode) {
+  if (mode == 1) {
+    g_viewmode = 1;
+    const s = 0.75;
+    g_animator.Animate(g_viewport, "scale", [1, s], [0, 1000]);
+    g_viewport.pos.x = 156;
+    g_viewport.pos.y = 470;
+    g_animator.Animate(g_scorepanel, "x", [-88, 0], [0, 1000]);
+  }
 }

@@ -77,14 +77,16 @@ class TextLabel {
     } else { this.pos = pos; }
     this.font_size = font_size;
     this.key = key;
+    this.align = LEFT;
+    this.textcolor = "#000";
   }
 
   Render() {
     push();
     noStroke();
-    fill(0);
+    fill(this.textcolor);
     textSize(this.font_size);
-    textAlign(LEFT, CENTER);
+    textAlign(this.ALIGN, CENTER);
     text(g_state[this.key], this.pos.x, this.pos.y + this.h/2);
     pop();
   }

@@ -1,7 +1,7 @@
 const RESTITUTIONS = [ 0.3, 0.3, 0 ];
 let RESTITUTION = 0.3;
-const FRIC_DYNAMIC = 0.67;
-const FRIC_STATIC = 0.8;
+const FRIC_DYNAMIC = 0.3;
+const FRIC_STATIC = 0.3;
 const GRAVITY = 9.8;
 const MY_DEBUG = false;
 
@@ -33,7 +33,7 @@ const SIZES =
   [ 2, 100 ],
 ]
 
-const MAX_TAG = 10;
+const MAX_TAG = 10; // Inclusive
 
 // XY Limits for physical computation
 function GetGlobalXYLimit() {
@@ -173,10 +173,7 @@ class PoShape {
     
     A.SetIsCollided(true);
     B.SetIsCollided(true);
-    if (MY_DEBUG) {
-      let dbg = mtd.copy().normalize();
-      line(A.pos.x, A.pos.y, A.pos.x + dbg.x*20, A.pos.y + dbg.y*20);
-    }
+    
     return [true, mtd];
   }
   
@@ -274,15 +271,12 @@ class PoShape {
     this.v_q = new p5.Vector(0, 0);
     this.j_q = new p5.Vector(0, 0);
     this.torque_q = 0;
-    this.pos_prev = this.pos.copy();
     
     if (this != g_cand) {
       // Combine 专用
       switch (this.state) {
         case 0:
-          if (this.pos.y >= g_ythresh) {
-            this.state = 1;
-          }
+          // 只有碰撞了之后才会变成1
           break;
         case 1:
           if (this.pos.y < g_ythresh && this.pos_prev.y >= g_ythresh) {
@@ -294,9 +288,10 @@ class PoShape {
       }
     }
     
+    this.pos_prev = this.pos.copy();
+    
     const cd = this.fade_in_countdown_ms;
     if (cd > 0) {
-      console.log("cd=" + cd);
       let cd1 = cd - dt;
       if (cd1 < 0) { cd1 = 0; }
       let c = 1.0 - cd1 / FADE_IN_COUNTDOWN_MS;
@@ -453,6 +448,13 @@ class PoRect extends PoShape {
       }
     }
     
+    if (MY_DEBUG) {
+      noStroke();
+      rotate(-this.theta);
+      fill("#33F");
+      text(this.state+"", 0, 0);
+    }
+    
     pop();
   }
   
@@ -576,6 +578,13 @@ class PoCircle extends PoShape {
       }
     } else {
       line(0, 0, this.r, 0);
+    }
+    
+    if (MY_DEBUG) {
+      noStroke();
+      rotate(-this.theta);
+      fill("#33F");
+      text(this.state+"", 0, 0);
     }
     
     pop();
@@ -826,7 +835,10 @@ class PoScene {
     const tag = a.tag + 1;
     this.shapes.remove(a);
     this.shapes.remove(b);
-    if (tag < MAX_TAG) {
+    
+    AddScore(tag);
+    
+    if (tag <= MAX_TAG) {
       const ab = new PoCircle(SIZES[tag][1]);
       ab.tag = tag;
       ab.pos = a.pos.copy().add(b.pos).mult(0.5);
@@ -838,17 +850,20 @@ class PoScene {
     const tag = a.tag + 1;
     this.shapes.remove(a);
     this.shapes.remove(b);
-    if (tag < MAX_TAG) {
+    
+    AddScore(tag);
+    
+    if (tag <= MAX_TAG) {
       const S = SIZES[tag][1];
       let ab;
       if (Math.random() < 0.5) {
         const new_hh = S;
         const new_hw = S;
         ab = new PoRect(new_hw, new_hh);
-        ab.tag = a.tag + 1;
+        ab.tag = tag;
       } else {
         ab = new PoCircle(S);
-        ab.tag = a.tag + 1;
+        ab.tag = tag;
       }
       ab.pos = a.pos.copy().add(b.pos).mult(0.5);
       ab.StartFadeIn();
@@ -861,7 +876,10 @@ class PoScene {
     const tag = a.tag + 1;
     this.shapes.remove(a);
     this.shapes.remove(b);
-    if (tag < MAX_TAG) {
+    
+    AddScore(tag);
+    
+    if (tag <= MAX_TAG) {
       const S = SIZES[tag][1];
       ab = new PoRect(S, S);
       ab.tag = tag;
@@ -946,6 +964,13 @@ class PoScene {
         let A = shapes1[i], B = shapes1[j];
         const c = PoShape.Collided(A, B);
         const is_collided = c[0];
+        
+        // For 合成；与任何东西碰撞之后，都将状态从0改为1
+        if (is_collided) {
+          if (A.state == 0) { A.state = 1; }
+          if (B.state == 0) { B.state = 1; }
+        }
+        
         const normal = c[1];
         if ((!(A.inv_mass == 0 && B.inv_mass == 0)) && is_collided) {
           // Add a contact
@@ -979,14 +1004,15 @@ class PoScene {
     this.shapes.push(temp1);
       
     let temp2 = new PoRect(10, height/2);
-    temp2.pos = new p5.Vector(-10, height/2);
+    temp2.pos = new p5.Vector(0, height/2);
     temp2.SetInfiniteMass();
     this.shapes.push(temp2);
   
     temp2 = new PoRect(10, height/2);
     temp2.pos = new p5.Vector(width+10, height/2);
     temp2.SetInfiniteMass();
-      
     this.shapes.push(temp2);
+    
+    console.log(this.shapes);
   }
 }

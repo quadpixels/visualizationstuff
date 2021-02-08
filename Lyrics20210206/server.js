@@ -4,9 +4,11 @@
 var express = require('express');
 var app = express();
 var http = require('http').Server(app);
+//var https = require('https')
+var fs = require('fs');
 var io = require('socket.io')(http, {
   cors: {
-    origin: ["http://edgeofmap.com:*",
+    origin: ["http://edgeofmap.com",
              "https://editor.p5js.org", // TODO：加入服务端的HTTPS
              "http://localhost:3001",
              "http://192.168.8.178:3001",
@@ -16,6 +18,10 @@ var io = require('socket.io')(http, {
    }
 });
 
+//const options = {
+//  key: fs.readFileSync('key.pem'),
+//  cert: fs.readFileSync('cert.pem')
+//};
 
 if (!Array.prototype.remove) {
   Array.prototype.remove = function(val) {
@@ -25,7 +31,8 @@ if (!Array.prototype.remove) {
 }
 
 // 簿记
-const NUM_ROOMS = 16;
+const NUM_ROOMS = 15;
+const ROOM_CAPACITY = 4;
 var g_rooms = [];
 class Room {
   constructor() {
@@ -38,26 +45,37 @@ class Room {
     this.thetas = []; // 手臂的角度
     this.curr_turn = 0; // 该谁扔球了？
     this.cand = undefined;
+    this.observers = [];
   }
   
   AddPlayer(socket) {
     const rank = this.sockets.length;
+    console.log("Room " + this.name + ", AddPlayer rank=" + rank);
     socket.rank = rank;
     socket.emit("rank", rank);
     this.sockets.push(socket);
     this.thetas.push(3.1415 / 2);
     if (rank > 0)
       socket.emit("cand", this.cand);
+    this.BroadcastThetas();
   }
   
   RemovePlayer(socket) {
-    this.sockets.remove(socket);
-    this.thetas.pop();
+    //console.log("[RemovePlayer] " + socket.is_observer)
+    //console.log(this.thetas)
+    if (socket.is_observer != true) {
+      this.thetas.pop();
+      this.sockets.remove(socket);
+    }
+    //console.log(this.thetas)
   }
   
   // 注意：发起变化的人就不用修改自己的了，在客户端上处理
   BroadcastThetas() {
     io.to(this.name).emit("thetas", this.thetas);
+    this.observers.forEach((o) => {
+      o.emit("thetas", this.thetas);
+    });
   }
   
   BroadcastCand() {
@@ -99,8 +117,15 @@ class Room {
       socket.emit("join_game_failed");
       return;
     }
+    
+    if (this.sockets.length >= ROOM_CAPACITY) {
+      socket.emit("join_game_failed_room_full");
+      return;
+    }
+    
     console.log("<< [JoinRoom]");
     socket.room = this;
+    socket.is_observer = false;
     socket.join(this.name);
     socket.emit("joined_game", this.name);
     this.AddPlayer(socket);
@@ -108,13 +133,34 @@ class Room {
     socket.emit("cand", this.cand);
   }
   
-  OnRoomSnapshot(socket, snapshot) {
+  JoinRoomAsObserver(socket) {
+    if (this.sockets.length < 1) {
+      socket.emit("join_game_failed");
+      return;
+    }
+    console.log("<< [JoinRoomAsObserver]");
+    socket.room = this;
+    socket.is_observer = true;
+    socket.emit("joined_game_observer", this.name);
+    this.observers.push(socket);
+  }
+  
+  OnRoomSnapshot(socket, snapshot, scores) {
     this.snapshot = snapshot;
-    if (socket == this.host)
-      socket.to(this.name).emit('poscene_snapshot', snapshot);
+    if (socket == this.host) {
+      socket.to(this.name).emit('poscene_snapshot', snapshot, scores);
+      this.observers.forEach((o) => {
+        o.emit('poscene_snapshot', snapshot, scores);
+      });
+    }
   }
   
   OnDisconnect(socket) {
+    if (socket.is_observer) {
+      this.observers.remove(socket);
+      return;
+    }
+    
     this.RemovePlayer(socket);
     if (this.host == socket) {
       this.host = undefined;
@@ -123,6 +169,8 @@ class Room {
     if (this.sockets.length > 0) {
       let new_host = this.sockets[0];
       new_host.emit("become_room_host", this.name);
+      console.log("OnDisconnect");
+      console.log(this.thetas);
       this.host = new_host;
       this.ReassignRanks();
       this.BroadcastThetas();
@@ -138,16 +186,19 @@ class Room {
     this.game = undefined;
     this.host = undefined;
     this.snapshot = "";
+    this.thetas = [];
     io.emit("roomstate", Room.GetRoomStates());
   }
   
   OnThetaChangedOne(socket, value, rank) {
     socket.to(this.name).emit("theta_one", value, rank);
+    this.observers.forEach((o) => { o.emit("theta_one", value, rank); });
   }
   
   SetCand(socket, cand) {
     this.cand = cand;
     socket.to(this.name).emit("cand", cand);
+    this.observers.forEach((o) => { o.emit("cand", cand); });
   }
   
   OnRequestReleaseCandidate(socket) {
@@ -163,6 +214,14 @@ class Room {
     let ret = [];
     for (let i=0; i<g_rooms.length; i++) { ret.push(g_rooms[i].state); }
     return ret;
+  }
+  
+  OnScoreUpdated(socket, score) {
+    socket.to(this.name).emit("score", score);
+  }
+  
+  OnGameOver(socket) {
+    socket.to(this.name).emit("gameover");
   }
 };
 
@@ -193,10 +252,16 @@ io.on('connection', function(socket) {
   // 请求在房间中开始一场新游戏
   socket.on("key", (k) => { console.log("key=" + k + " from " + tok); });
   socket.on("create_new_game", (rid) => { g_rooms[rid].CreateNewGame(socket); });
-  socket.on("join_room", (rid) => { console.log(rid); g_rooms[rid].JoinRoom(socket); });
-  socket.on("poscene_snapshot", (snapshot) => {
+  socket.on("join_room", (rid) => { 
+      console.log(rid); g_rooms[rid].JoinRoom(socket); 
+  });
+  socket.on("join_room_observer", (rid) => {
+      g_rooms[rid].JoinRoomAsObserver(socket);
+  });
+  
+  socket.on("poscene_snapshot", (snapshot, scores) => {
     if (socket.room != undefined)
-      socket.room.OnRoomSnapshot(socket, snapshot); 
+      socket.room.OnRoomSnapshot(socket, snapshot, scores); 
   });
   socket.on("disconnect", () => {
     if (socket.room != undefined) {
@@ -216,8 +281,19 @@ io.on('connection', function(socket) {
     if (socket.room != undefined)
       socket.room.OnRequestReleaseCandidate(socket);
   });
+  
+  socket.on("score", (score) => {
+    if (socket.room != undefined)
+      socket.room.OnScoreUpdated(socket, score);
+  });
+  
+  socket.on("gameover", () => {
+    if (socket.room != undefined) {
+      socket.room.OnGameOver(socket);
+    }
+  });
 });
 
-http.listen(3001, function() {
-  console.log("Listening on port 3001");
+http.listen(3000, function() {
+  console.log("Listening on port 3000");
 });
