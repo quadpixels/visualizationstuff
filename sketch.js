@@ -25,8 +25,24 @@ class ArrayViz {
       const dy = i*L;
       line(0, dy, L*this.ncols, dy);
     }
+    noStroke(); fill(255, 255, 0);
+    textAlign(CENTER, CENTER);
+    let idx = 0;
+    for (let r=0; r<this.nrows; r++) {
+      for (let c=0; c<this.ncols; c++) {
+        const dx = L*(c+0.5), dy = L*(r+0.5);
+        const e = this.elts[r][c];
+        if (e != undefined) {
+          text("" + e, dx, dy); 
+        }
+      }
+    }
     pop();
   }
+}
+
+async function f() {
+  g_module = await Module();
 }
 
 let g_a;
@@ -38,6 +54,7 @@ function setup() {
   g_b = new ArrayViz(2, 3);
   g_a.x = 8; g_a.y = 32;
   g_b.x = 8; g_b.y = 80;
+  f();
 }
 
 function draw() {
@@ -53,4 +70,14 @@ function draw() {
   g_b.Render();
 
   pop();
+}
+
+function UpdateArrayA(idx, val) {
+  console.log("A " + idx + " " + val);
+  g_a.elts[0][idx] = val;
+}
+
+function UpdateArrayB(r, c, val) {
+  console.log("B " + r + " " + c + " " + val);
+  g_b.elts[r][c] = val;
 }

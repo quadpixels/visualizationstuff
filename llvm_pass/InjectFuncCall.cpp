@@ -87,9 +87,28 @@ bool InjectFuncCall::runOnModule(Module &M) {
     {},
     false
   );
-
   FunctionCallee MyEmFunc = M.getOrInsertFunction("MyEmFunc", MyEmFuncTy);
 
+  FunctionType* UpdateArrayATy = FunctionType::get(
+      Type::getVoidTy(CTX),
+      {
+        IntegerType::getInt32Ty(CTX),
+        IntegerType::getInt32Ty(CTX)
+      },
+      false
+  );
+  FunctionCallee UpdateArrayA = M.getOrInsertFunction("UpdateArrayA", UpdateArrayATy);
+
+  FunctionType* UpdateArrayBTy = FunctionType::get(
+      Type::getVoidTy(CTX),
+      {
+        IntegerType::getInt32Ty(CTX),
+        IntegerType::getInt32Ty(CTX),
+        IntegerType::getInt32Ty(CTX)
+      },
+      false
+  );
+  FunctionCallee UpdateArrayB = M.getOrInsertFunction("UpdateArrayB", UpdateArrayBTy);
 
   // STEP 2: Inject a global variable that will hold the printf format string
   // ------------------------------------------------------------------------
@@ -145,27 +164,29 @@ bool InjectFuncCall::runOnModule(Module &M) {
                 errs() << "PointerOp " << (*(SI->getPointerOperand())) << "\n";
                 if (auto* gep = dyn_cast<GetElementPtrInst>(SI->getPointerOperand())) {
                     Value* ptr = gep->getPointerOperand();
-                    errs() << "GEP " << *ptr << "\n";
+
                     if (auto* ai = dyn_cast<AllocaInst>(ptr)) {
                         auto it = alloca_to_varname_map.find(ai);
                         if (it != alloca_to_varname_map.end()) {
                             errs() << "Write local array: " << it->second << " at instr: "
-                                   << I << ", " << (gep->getNumOperands()-1) << "indices:";
-                            for (int i=1; i<gep->getNumOperands(); i++) {
-                                if (ConstantInt* ci = dyn_cast<ConstantInt>(gep->getOperand(i))) {
-                                    errs() << ci->getSExtValue() << " ";
-                                } else {
-                                    errs() << *(gep->getOperand(i)) << " ";
-                                }
-                            }
+                                   << I << ", indices:";
+                            errs() << *(gep->getOperand(2)) << " ";
                             errs() << "\n";
 
                             IRBuilder<> B(&I);
+                            llvm::Constant* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(CTX), 0);
                             llvm::Value *format_str_ptr =
-                                B.CreatePointerCast(WriteArrayFormatStr, PrintfArgTy, "formatStr");
+                                B.CreateGEP(
+                                    dyn_cast<GlobalVariable>(WriteArrayFormatStrVar)->getValueType(),
+                                    dyn_cast<GlobalVariable>(WriteArrayFormatStrVar),
+                                    {zero, zero},
+                                    "formatStr");
                             auto VarName = B.CreateGlobalStringPtr(it->second);
                             B.CreateCall(
                                 Printf, {format_str_ptr, VarName, gep->getOperand(2), SI->getValueOperand()});
+                            if (std::string(it->second) == "a") {
+                                B.CreateCall(UpdateArrayA, { gep->getOperand(2), SI->getValueOperand() });
+                            }
                         }
                     } else if (auto* gep2 = dyn_cast<GetElementPtrInst>(ptr)) {
                         ptr = gep2->getPointerOperand();
@@ -191,6 +212,9 @@ bool InjectFuncCall::runOnModule(Module &M) {
                                 auto VarName = B.CreateGlobalStringPtr(it->second);
                                 B.CreateCall(
                                     Printf, {format_str_ptr, VarName, gep2->getOperand(2), gep->getOperand(2), SI->getValueOperand()});
+                                if (std::string(it->second) == "b") {
+                                    B.CreateCall(UpdateArrayB, { gep2->getOperand(2), gep->getOperand(2), SI->getValueOperand() });
+                                }
                             }
                         }
                     }
