@@ -3,13 +3,14 @@
 let g_frame_count = 0;
 
 class ArrayViz {
-  constructor(m, n) {
+  constructor(m, n, t) {
     this.elts = Array(m);
     for (let i=0; i<m; i++) { this.elts[i] = Array(n); }
     this.x = 8;
     this.y = 8;
     this.nrows = m;
     this.ncols = n;
+    this.title = t;
   }
 
   Render() {
@@ -37,7 +38,17 @@ class ArrayViz {
         }
       }
     }
+    textAlign(LEFT, BOTTOM);
+    text(this.title, 0, 0);
     pop();
+  }
+
+  Reset() {
+    for (let r=0; r<this.nrows; r++) {
+      for (let c=0; c<this.ncols; c++) {
+        this.elts[r][c] = undefined;
+      }
+    }
   }
 }
 
@@ -47,13 +58,17 @@ async function f() {
 
 let g_a;
 let g_b;
+let g_actions = [];
+let g_currstep = 0;
+let g_autorun = false;
 
 function setup() {
-  createCanvas(400, 400);
-  g_a = new ArrayViz(1, 6);
-  g_b = new ArrayViz(2, 3);
-  g_a.x = 8; g_a.y = 32;
-  g_b.x = 8; g_b.y = 80;
+  createCanvas(240, 160);
+  g_a = new ArrayViz(1, 6, "Array A");
+  g_b = new ArrayViz(2, 3, "Array B");
+  g_a.x = 8; g_a.y = 48;
+  g_b.x = 8; g_b.y = 96;
+  g_actions = [];
   f();
 }
 
@@ -69,15 +84,67 @@ function draw() {
   g_a.Render();
   g_b.Render();
 
+  textAlign(RIGHT, TOP);
+  text("Step " + g_currstep + "/" + g_actions.length + " done", width-8, 8);
+  textAlign(LEFT, TOP);
+  text("CXX -> JS", 8, 8);
+
   pop();
 }
 
 function UpdateArrayA(idx, val) {
   console.log("A " + idx + " " + val);
-  g_a.elts[0][idx] = val;
+  //g_a.elts[0][idx] = val;
+  g_actions.push(["a", 0, idx, val]);
 }
 
 function UpdateArrayB(r, c, val) {
   console.log("B " + r + " " + c + " " + val);
-  g_b.elts[r][c] = val;
+  //g_b.elts[r][c] = val;
+  g_actions.push(["b", r, c, val]);
 }
+
+function Reset() {
+  g_a.Reset();
+  g_b.Reset();
+  g_currstep = 0;
+}
+
+function Done() {
+  return (g_currstep >= g_actions.length);
+}
+
+function NextStep() {
+  if (Done()) return;
+  const a = g_actions[g_currstep++];
+  if (a[0] == "a") {
+    g_a.elts[a[1]][a[2]] = a[3];
+  } else if (a[0] == "b") {
+    g_b.elts[a[1]][a[2]] = a[3];
+  }
+}
+
+function AutorunCallback() {
+  if (g_autorun) {
+    let delay = 100;
+
+    if (Done() == false) {
+      delay = 300;
+      NextStep();
+      if (Done()) {
+        delay = 2000;
+      }
+    } else {
+      Reset();
+    }
+    
+    setTimeout(() => {
+      AutorunCallback();
+    }, delay);
+  }
+}
+
+setTimeout(() => {
+  g_autorun = true;
+  AutorunCallback();
+}, 2000);
