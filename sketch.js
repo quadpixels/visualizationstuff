@@ -92,16 +92,14 @@ function draw() {
   pop();
 }
 
-function UpdateArrayA(idx, val) {
-  console.log("A " + idx + " " + val);
+function Update1DArray(name, idx, val) {
   //g_a.elts[0][idx] = val;
-  g_actions.push(["a", 0, idx, val]);
+  g_actions.push([name, 0, idx, val]);
 }
 
-function UpdateArrayB(r, c, val) {
-  console.log("B " + r + " " + c + " " + val);
+function Update2DArray(name, r, c, val) {
   //g_b.elts[r][c] = val;
-  g_actions.push(["b", r, c, val]);
+  g_actions.push([name, r, c, val]);
 }
 
 function Reset() {

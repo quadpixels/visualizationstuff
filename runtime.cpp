@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <emscripten.h>
 
 extern "C" void MyEmFunc() {
@@ -7,14 +8,14 @@ extern "C" void MyEmFunc() {
   });
 }
 
-extern "C" void UpdateArrayA(int idx, int value) {
-  EM_ASM({
-    UpdateArrayA($0, $1);
-  }, idx, value);
+extern "C" void Update1DArray(const char* name, int idx, int value) {
+  char buf[1000];
+  snprintf(buf, sizeof(buf), "Update1DArray('%s', %d, %d)", name, idx, value);
+  emscripten_run_script(buf);
 }
 
-extern "C" void UpdateArrayB(int r, int c, int value) {
-  EM_ASM({
-    UpdateArrayB($0, $1, $2);
-  }, r, c, value);
+extern "C" void Update2DArray(const char* name, int r, int c, int value) {
+  char buf[1000];
+  snprintf(buf, sizeof(buf), "Update2DArray('%s', %d, %d, %d)", name, r, c, value);
+  emscripten_run_script(buf);
 }

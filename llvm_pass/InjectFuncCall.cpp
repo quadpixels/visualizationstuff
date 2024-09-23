@@ -89,26 +89,30 @@ bool InjectFuncCall::runOnModule(Module &M) {
   );
   FunctionCallee MyEmFunc = M.getOrInsertFunction("MyEmFunc", MyEmFuncTy);
 
-  FunctionType* UpdateArrayATy = FunctionType::get(
-      Type::getVoidTy(CTX),
-      {
-        IntegerType::getInt32Ty(CTX),
-        IntegerType::getInt32Ty(CTX)
-      },
-      false
-  );
-  FunctionCallee UpdateArrayA = M.getOrInsertFunction("UpdateArrayA", UpdateArrayATy);
+  PointerType *Char8PtrTy = PointerType::get(Type::getInt8Ty(CTX), 0);
 
-  FunctionType* UpdateArrayBTy = FunctionType::get(
+  FunctionType* Update1DArrayTy = FunctionType::get(
       Type::getVoidTy(CTX),
       {
+        Char8PtrTy,
+        IntegerType::getInt32Ty(CTX),
+        IntegerType::getInt32Ty(CTX)
+      },
+      false
+  );
+  FunctionCallee Update1DArray = M.getOrInsertFunction("Update1DArray", Update1DArrayTy);
+
+  FunctionType* Update2DArrayTy = FunctionType::get(
+      Type::getVoidTy(CTX),
+      {
+        Char8PtrTy,
         IntegerType::getInt32Ty(CTX),
         IntegerType::getInt32Ty(CTX),
         IntegerType::getInt32Ty(CTX)
       },
       false
   );
-  FunctionCallee UpdateArrayB = M.getOrInsertFunction("UpdateArrayB", UpdateArrayBTy);
+  FunctionCallee Update2DArray = M.getOrInsertFunction("Update2DArray", Update2DArrayTy);
 
   // STEP 2: Inject a global variable that will hold the printf format string
   // ------------------------------------------------------------------------
@@ -143,6 +147,10 @@ bool InjectFuncCall::runOnModule(Module &M) {
     if (F.isDeclaration())
       continue;
 
+    // Get an IR builder. Sets the insertion point to the top of the function
+    // Move here to prevent crashing on WSL
+    IRBuilder<> Builder(&*F.getEntryBlock().getFirstInsertionPt());
+
     std::unordered_map<AllocaInst*, StringRef> alloca_to_varname_map;
 
     for (auto& BB : F) {
@@ -151,7 +159,7 @@ bool InjectFuncCall::runOnModule(Module &M) {
             if (auto* dbgDeclare = dyn_cast<DbgDeclareInst>(&I)) {
                 if (auto* ai = dyn_cast<AllocaInst>(dbgDeclare->getAddress())) {
                     if (const auto& dv = dbgDeclare->getVariable()) {
-                        errs() << "Local var: " << dv->getName() << "(" << *ai << ")\n";
+                        errs() << "Local var: " << dv->getName() << " (" << *ai << ")\n";
                         alloca_to_varname_map[ai] = dv->getName();
                     }
                 }
@@ -181,11 +189,13 @@ bool InjectFuncCall::runOnModule(Module &M) {
                                     dyn_cast<GlobalVariable>(WriteArrayFormatStrVar),
                                     {zero, zero},
                                     "formatStr");
-                            auto VarName = B.CreateGlobalStringPtr(it->second);
+                            llvm::Constant* VarName = Builder.CreateGlobalStringPtr(it->second);  // @3 = private unnamed_addr constant [2 x i8] c"a\00", align 1
                             B.CreateCall(
                                 Printf, {format_str_ptr, VarName, gep->getOperand(2), SI->getValueOperand()});
-                            if (std::string(it->second) == "a") {
-                                B.CreateCall(UpdateArrayA, { gep->getOperand(2), SI->getValueOperand() });
+
+                            {  // Assuming indices are 32-bit (this is the case when building for wasm32)
+                                B.CreateCall(
+                                    Update1DArray, { VarName, gep->getOperand(2), SI->getValueOperand() });
                             }
                         }
                     } else if (auto* gep2 = dyn_cast<GetElementPtrInst>(ptr)) {
@@ -209,11 +219,12 @@ bool InjectFuncCall::runOnModule(Module &M) {
                                         dyn_cast<GlobalVariable>(Write2DArrayFormatStrVar),
                                         {zero, zero},
                                         "formatStrPtr");
-                                auto VarName = B.CreateGlobalStringPtr(it->second);
+                                auto VarName = Builder.CreateGlobalStringPtr(it->second);
                                 B.CreateCall(
                                     Printf, {format_str_ptr, VarName, gep2->getOperand(2), gep->getOperand(2), SI->getValueOperand()});
-                                if (std::string(it->second) == "b") {
-                                    B.CreateCall(UpdateArrayB, { gep2->getOperand(2), gep->getOperand(2), SI->getValueOperand() });
+                                {
+                                    B.CreateCall(
+                                        Update2DArray, { VarName, gep2->getOperand(2), gep->getOperand(2), SI->getValueOperand() });
                                 }
                             }
                         }
@@ -226,7 +237,7 @@ bool InjectFuncCall::runOnModule(Module &M) {
                         IRBuilder<> B(&I);
                         llvm::Value *format_str_ptr =
                             B.CreatePointerCast(WriteVarFormatStrVar, PrintfArgTy, "formatStr");
-                        auto VarName = B.CreateGlobalStringPtr(it->second);
+                        auto VarName = Builder.CreateGlobalStringPtr(it->second);
                         //auto b32 = B.getInt32(SI->getValueOperand());
                         B.CreateCall(
                             Printf, {format_str_ptr, VarName, SI->getValueOperand()});
@@ -235,9 +246,6 @@ bool InjectFuncCall::runOnModule(Module &M) {
             }
         }
     }
-
-    // Get an IR builder. Sets the insertion point to the top of the function
-    IRBuilder<> Builder(&*F.getEntryBlock().getFirstInsertionPt());
 
     // Inject a global variable that contains the function name
     auto FuncName = Builder.CreateGlobalStringPtr(F.getName());

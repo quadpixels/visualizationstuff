@@ -3,3 +3,4 @@
 a.out.js
 a.wasm
 llvm_pass/build
+*.gif
