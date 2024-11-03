@@ -169,8 +169,40 @@ bool InjectFuncCall::runOnModule(Module &M) {
     for (auto& BB : F) {
         for (auto& I : BB) {
             if (auto* SI = dyn_cast<StoreInst>(&I)) {
-                errs() << "PointerOp " << (*(SI->getPointerOperand())) << "\n";
-                if (auto* gep = dyn_cast<GetElementPtrInst>(SI->getPointerOperand())) {
+                Value* dest = SI->getPointerOperand();
+                errs() << "PointerOp " << *dest << " from inst " << *SI << "\n";
+                GetElementPtrInst* gep = dyn_cast<GetElementPtrInst>(dest);
+
+                // For "ptr getelementptr" introduced in LLVM-15
+                Instruction* destInst = dyn_cast<Instruction>(dest);
+                if (destInst && destInst->getOpcode() == Instruction::GetElementPtr) {
+                    gep = static_cast<GetElementPtrInst*>(destInst);
+                }
+
+                ConstantExpr* destConstExpr = dyn_cast<ConstantExpr>(dest);
+                if (destConstExpr && destConstExpr->getOpcode() == Instruction::GetElementPtr) {
+                    // store i32 %22, ptr getelementptr inbounds([2xi32], ptr @marker, i32 0, i32 1), align 4, !dbg !53
+                    // The "ptr getelementptr" operand of the StoreInst is a constant expr
+                    errs() << "Write Global Variable expressed in a constant expression: " << *destConstExpr << "\n";
+                    Value* basePtr = destConstExpr->getOperand(0);
+
+                    IRBuilder<> B(&I);
+                    llvm::Constant* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(CTX), 0);
+                    llvm::Value *format_str_ptr =
+                        B.CreateGEP(
+                            dyn_cast<GlobalVariable>(WriteArrayFormatStrVar)->getValueType(),
+                            dyn_cast<GlobalVariable>(WriteArrayFormatStrVar),
+                            {zero, zero},
+                            "formatStr");
+                    llvm::Constant* VarName = Builder.CreateGlobalStringPtr(basePtr->getName());
+                    B.CreateCall(
+                        Printf, {format_str_ptr, VarName, destConstExpr->getOperand(2), SI->getValueOperand()});
+
+                    {  // Assuming indices are 32-bit (this is the case when building for wasm32)
+                        B.CreateCall(
+                            Update1DArray, { VarName, destConstExpr->getOperand(2), SI->getValueOperand() });
+                    }
+                } else if (gep) {
                     Value* ptr = gep->getPointerOperand();
 
                     if (auto* ai = dyn_cast<AllocaInst>(ptr)) {
@@ -197,6 +229,24 @@ bool InjectFuncCall::runOnModule(Module &M) {
                                 B.CreateCall(
                                     Update1DArray, { VarName, gep->getOperand(2), SI->getValueOperand() });
                             }
+                        }
+                    } else if (auto* gv = dyn_cast<GlobalVariable>(ptr)) {
+                        errs() << "Write Global Variable: " << *gv << ", name=" << gv->getName() << "\n";
+                        IRBuilder<> B(&I);
+                        llvm::Constant* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(CTX), 0);
+                        llvm::Value *format_str_ptr =
+                            B.CreateGEP(
+                                dyn_cast<GlobalVariable>(WriteArrayFormatStrVar)->getValueType(),
+                                dyn_cast<GlobalVariable>(WriteArrayFormatStrVar),
+                                {zero, zero},
+                                "formatStr");
+                        llvm::Constant* VarName = Builder.CreateGlobalStringPtr(gv->getName());  // @3 = private unnamed_addr constant [2 x i8] c"a\00", align 1
+                        B.CreateCall(
+                            Printf, {format_str_ptr, VarName, gep->getOperand(2), SI->getValueOperand()});
+
+                        {  // Assuming indices are 32-bit (this is the case when building for wasm32)
+                            B.CreateCall(
+                                Update1DArray, { VarName, gep->getOperand(2), SI->getValueOperand() });
                         }
                     } else if (auto* gep2 = dyn_cast<GetElementPtrInst>(ptr)) {
                         ptr = gep2->getPointerOperand();
@@ -228,8 +278,10 @@ bool InjectFuncCall::runOnModule(Module &M) {
                                 }
                             }
                         }
+                    } else {
+                        printf("Not sure about gep's pointeroperand's type.\n");
                     }
-                } else if (auto* ptr = dyn_cast<AllocaInst>(SI->getPointerOperand())) {
+                } else if (auto* ptr = dyn_cast<AllocaInst>(dest)) {
                     auto it = alloca_to_varname_map.find(ptr);
                     if (it != alloca_to_varname_map.end()) {
                         errs() << "Write to local var: " << it->second << " at instr: " << I
@@ -241,6 +293,25 @@ bool InjectFuncCall::runOnModule(Module &M) {
                         //auto b32 = B.getInt32(SI->getValueOperand());
                         B.CreateCall(
                             Printf, {format_str_ptr, VarName, SI->getValueOperand()});
+                    }
+                } else if (auto* gv = dyn_cast<GlobalVariable>(dest)) {
+                    // store i32 %94, ptr @marker, align 4, !dbg !134
+                    errs() << "Write Global Variable at offset 0: " << *gv << ", name=" << gv->getName() << "\n";
+                    IRBuilder<> B(&I);
+                    llvm::Constant* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(CTX), 0);
+                    llvm::Value *format_str_ptr =
+                        B.CreateGEP(
+                            dyn_cast<GlobalVariable>(WriteArrayFormatStrVar)->getValueType(),
+                            dyn_cast<GlobalVariable>(WriteArrayFormatStrVar),
+                            {zero, zero},
+                            "formatStr");
+                    llvm::Constant* VarName = Builder.CreateGlobalStringPtr(gv->getName());
+                    B.CreateCall(
+                        Printf, {format_str_ptr, VarName, zero, SI->getValueOperand()});
+
+                    {  // Assuming indices are 32-bit (this is the case when building for wasm32)
+                        B.CreateCall(
+                            Update1DArray, { VarName, zero, SI->getValueOperand() });
                     }
                 }
             }
