@@ -1,0 +1,9 @@
+*.bc
+*.ll
+*.out
+*.out.js
+*.wasm
+llvm_pass/build
+*.gif
+.vscode/launch.json
+.vscode/tasks.json
