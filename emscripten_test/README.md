@@ -41,3 +41,21 @@ The organization simplifies Step #2 in the following workflow:
 2. Quicksort
 
     ![Quicksort](./images/quicksort.gif)
+
+## Building and Testing
+
+Only supports my WSL setup for now
+
+- Build / clean
+
+```
+bash BUILD_WSL.bash         # build
+bash BUILD_WSL.bash clean   # clean
+```
+
+- Test
+
+```
+npm install jest
+npm test
+```

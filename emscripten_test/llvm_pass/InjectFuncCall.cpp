@@ -45,6 +45,7 @@ make
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/Demangle/Demangle.h"
 
 using namespace llvm;
 
@@ -146,6 +147,8 @@ bool InjectFuncCall::runOnModule(Module &M) {
   for (auto &F : M) {
     if (F.isDeclaration())
       continue;
+    std::string demangled = llvm::demangle(F.getName().str());
+    if (demangled.find("std::") != std::string::npos) continue;  // Do not touch std
 
     // Get an IR builder. Sets the insertion point to the top of the function
     // Move here to prevent crashing on WSL
@@ -154,7 +157,8 @@ bool InjectFuncCall::runOnModule(Module &M) {
     std::unordered_map<AllocaInst*, StringRef> alloca_to_varname_map;
 
     for (auto& BB : F) {
-        errs() << "Func: " << F.getName() << "\n";
+        errs() << "Func:      " << F.getName() << "\n";
+        errs() << "Demangled: " << demangled << "\n";
         for (auto &I : BB) {
             if (auto* dbgDeclare = dyn_cast<DbgDeclareInst>(&I)) {
                 if (auto* ai = dyn_cast<AllocaInst>(dbgDeclare->getAddress())) {
@@ -312,6 +316,44 @@ bool InjectFuncCall::runOnModule(Module &M) {
                     {  // Assuming indices are 32-bit (this is the case when building for wasm32)
                         B.CreateCall(
                             Update1DArray, { VarName, zero, SI->getValueOperand() });
+                    }
+                } else if (auto* ci = dyn_cast<CallInst>(dest)) { // std::__2::vector<int, std::__2::allocator<int> >::operator[][abi:ne180100](unsigned long)
+                    std::string fn(ci->getCalledFunction()->getName());
+                    fn = llvm::demangle(fn);
+                    if (fn.find("std::__2::vector") != std::string::npos &&
+                        fn.find("operator[]") != std::string::npos) {
+                        errs() << "  vector::operator[] called with " << ci->getNumOperands() << " args\n";
+                        for (int arg_idx = 0; arg_idx < ci->getNumOperands(); arg_idx++) {
+                            errs() << arg_idx << " " << *(ci->getOperand(arg_idx)) << "\n";
+                        }
+                        
+                        AllocaInst* arg0 = dyn_cast<AllocaInst>(ci->getOperand(0));
+                        if (arg0) {
+                            auto it = alloca_to_varname_map.find(arg0);
+                            if (it != alloca_to_varname_map.end()) {
+                                errs() << "Write local vector: " << it->second << " at instr: "
+                                    << I << ", indices:";
+                                errs() << *(ci->getOperand(1)) << " ";
+                                errs() << "\n";
+
+                                IRBuilder<> B(&I);
+                                llvm::Constant* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(CTX), 0);
+                                llvm::Value *format_str_ptr =
+                                    B.CreateGEP(
+                                        dyn_cast<GlobalVariable>(WriteArrayFormatStrVar)->getValueType(),
+                                        dyn_cast<GlobalVariable>(WriteArrayFormatStrVar),
+                                        {zero, zero},
+                                        "formatStr");
+                                llvm::Constant* VarName = Builder.CreateGlobalStringPtr(it->second);  // @3 = private unnamed_addr constant [2 x i8] c"a\00", align 1
+                                B.CreateCall(
+                                    Printf, {format_str_ptr, VarName, ci->getOperand(1), SI->getValueOperand()});
+
+                                {  // Assuming indices are 32-bit (this is the case when building for wasm32)
+                                    B.CreateCall(
+                                        Update1DArray, { VarName, ci->getOperand(1), SI->getValueOperand() });
+                                }
+                            }
+                        }
                     }
                 }
             }
